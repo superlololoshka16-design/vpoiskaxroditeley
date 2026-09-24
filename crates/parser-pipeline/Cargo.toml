@@ -1,0 +1,18 @@
+[package]
+name = "parser-pipeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lol_html = { workspace = true }
+aho-corasick = { workspace = true }
+bumpalo = { workspace = true }
+compact_str = { workspace = true }
+smallvec = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+phf = { workspace = true }
+scc = { workspace = true }
+core-utils = { workspace = true }

@@ -1,0 +1,23 @@
+[package]
+name = "net-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wreq = { workspace = true }
+encoding_rs = { workspace = true }
+wreq-util = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+compact_str = { workspace = true }
+smallvec = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+core-utils = { workspace = true }
+scc = { workspace = true }
+session-state = { workspace = true }
+parser-pipeline = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,54 @@
+[package]
+name = "runtime-exec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rquickjs = { workspace = true }
+oxc_allocator = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_traverse = { workspace = true }
+oxc_semantic = { workspace = true }
+oxc_codegen = { workspace = true }
+memmap2 = { workspace = true }
+crossbeam-channel = { workspace = true }
+scc = { workspace = true }
+tokio = { workspace = true }
+compact_str = { workspace = true }
+smallvec = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+core-utils = { workspace = true }
+taffy = { workspace = true }
+session-state = { workspace = true }
+payload-gen = { workspace = true }
+parser-pipeline = { workspace = true }
+challenge-solver = { workspace = true }
+
+icu_locale = { workspace = true }
+icu_provider_blob = { workspace = true }
+icu_provider = { workspace = true }
+icu_provider_adapters = { workspace = true }
+icu_locale_core = { workspace = true }
+icu_locale_fallback = { workspace = true }
+icu_datetime = { workspace = true }
+icu_decimal = { workspace = true }
+icu_plurals = { workspace = true }
+icu_segmenter = { workspace = true }
+icu_collator = { workspace = true }
+icu_list = { workspace = true }
+icu_calendar = { workspace = true }
+icu_time = { workspace = true }
+icu_experimental = { workspace = true }
+fixed_decimal = { workspace = true }
+writeable = { workspace = true }
+zstd = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+crossbeam-channel = { workspace = true }
+bytes = { workspace = true }
+

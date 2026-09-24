@@ -1,0 +1,17 @@
+[package]
+name = "payload-gen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+hex = { workspace = true }
+base64-turbo = { workspace = true }
+
+[dependencies]
+session-state = { workspace = true }
+core-utils = { workspace = true }
+smallvec = { workspace = true }
+compact_str = { workspace = true }
+tiny-skia = { workspace = true }
+bytemuck = { workspace = true }

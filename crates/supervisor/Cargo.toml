@@ -1,0 +1,34 @@
+[package]
+name = "supervisor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "my-engine"
+path = "src/main.rs"
+
+[dependencies]
+mimalloc = { workspace = true }
+core-utils = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+crossbeam-channel = { workspace = true }
+bytes = { workspace = true }
+compact_str = { workspace = true }
+smallvec = { workspace = true }
+session-state = { workspace = true }
+parser-pipeline = { workspace = true }
+net-client = { workspace = true }
+challenge-solver = { workspace = true }
+runtime-exec = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+sonic-rs = { workspace = true }
+scc = { workspace = true }
+payload-gen = { workspace = true }
+wreq = { workspace = true }
+
+[dev-dependencies]
