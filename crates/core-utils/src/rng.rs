@@ -51,12 +51,16 @@ pub fn mix64(x: u64) -> u64 {
 #[derive(Debug, Clone, Copy)]
 pub struct SplitMix64Rng {
     state: u64,
+    spare_gauss: f64,
 }
 
 impl SplitMix64Rng {
     #[inline]
     pub const fn new(seed: u64) -> Self {
-        Self { state: seed }
+        Self {
+            state: seed,
+            spare_gauss: f64::NAN,
+        }
     }
 
     #[inline]
@@ -104,7 +108,14 @@ impl SplitMix64Rng {
 
     #[inline]
     pub fn gauss(&mut self) -> f64 {
-        gauss_polar(|| self.next_f64())
+        if self.spare_gauss.is_finite() {
+            let v = self.spare_gauss;
+            self.spare_gauss = f64::NAN;
+            return v;
+        }
+        let (a, b) = gauss_polar_pair(|| self.next_f64());
+        self.spare_gauss = b;
+        a
     }
 
     #[inline]
@@ -120,13 +131,14 @@ impl SplitMix64Rng {
 }
 
 #[inline]
-fn gauss_polar(mut draw: impl FnMut() -> f64) -> f64 {
+fn gauss_polar_pair(mut draw: impl FnMut() -> f64) -> (f64, f64) {
     loop {
         let x = draw() * 2.0 - 1.0;
         let y = draw() * 2.0 - 1.0;
         let s = x * x + y * y;
         if s > 0.0 && s < 1.0 {
-            return x * (-2.0 * s.ln() / s).sqrt();
+            let f = (-2.0 * s.ln() / s).sqrt();
+            return (x * f, y * f);
         }
     }
 }
@@ -242,12 +254,12 @@ impl Rng {
         if s.iter().all(|&v| v == 0) {
             return Self {
                 s: [1, 2, 4, 8],
-                spare_gauss: 0.0,
+                spare_gauss: f64::NAN,
             };
         }
         Self {
             s,
-            spare_gauss: 0.0,
+            spare_gauss: f64::NAN,
         }
     }
 
@@ -283,15 +295,7 @@ impl Rng {
 
     #[inline]
     fn gauss_pair(&mut self) -> (f64, f64) {
-        loop {
-            let x = self.next_f64() * 2.0 - 1.0;
-            let y = self.next_f64() * 2.0 - 1.0;
-            let s = x * x + y * y;
-            if s > 0.0 && s < 1.0 {
-                let f = (-2.0 * s.ln() / s).sqrt();
-                return (x * f, y * f);
-            }
-        }
+        gauss_polar_pair(|| self.next_f64())
     }
 
     #[inline]

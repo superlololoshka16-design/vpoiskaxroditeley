@@ -27,6 +27,20 @@ pub trait BytesExt {
     fn contains_ci(&self, needle: &[u8]) -> bool;
     fn strip_prefix_ci(&self, prefix: &[u8]) -> Option<&Self>;
     fn leb128(&self, pos: &mut usize) -> Option<u64>;
+    fn be_u16(&self, o: usize) -> u16;
+    fn be_i16(&self, o: usize) -> i16;
+    fn be_u32(&self, o: usize) -> u32;
+    fn hex_byte(&self, i: usize) -> u8;
+}
+
+#[inline]
+pub fn hex_val(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'f' => c - b'a' + 10,
+        b'A'..=b'F' => c - b'A' + 10,
+        _ => 0,
+    }
 }
 
 impl BytesExt for [u8] {
@@ -245,6 +259,26 @@ impl BytesExt for [u8] {
                 return None;
             }
         }
+    }
+
+    #[inline]
+    fn be_u16(&self, o: usize) -> u16 {
+        u16::from_be_bytes([self[o], self[o + 1]])
+    }
+
+    #[inline]
+    fn be_i16(&self, o: usize) -> i16 {
+        i16::from_be_bytes([self[o], self[o + 1]])
+    }
+
+    #[inline]
+    fn be_u32(&self, o: usize) -> u32 {
+        u32::from_be_bytes([self[o], self[o + 1], self[o + 2], self[o + 3]])
+    }
+
+    #[inline]
+    fn hex_byte(&self, i: usize) -> u8 {
+        hex_val(self[i]) * 16 + hex_val(self[i + 1])
     }
 }
 

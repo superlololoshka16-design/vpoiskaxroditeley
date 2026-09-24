@@ -62,6 +62,11 @@ pub trait StrExt {
 const EMPTY: &str = "";
 
 #[inline]
+pub fn scheme_is_http(scheme: &str) -> bool {
+    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+}
+
+#[inline]
 fn port_displayed(scheme: &str, port: &str) -> bool {
     let default = (scheme.eq_ignore_ascii_case("http") && port == "80")
         || (scheme.eq_ignore_ascii_case("https") && port == "443");
@@ -213,12 +218,30 @@ pub fn host_of(url: &str) -> CompactString {
     url.host()
 }
 
+pub fn host_hash(s: &str) -> u64 {
+    use std::hash::Hasher as _;
+    let a = split_authority(s);
+    let host = a.host.as_bytes();
+    let mut h = crate::xxh3::XxHash3_64::new();
+    let mut buf = [0u8; 64];
+    let mut i = 0;
+    while i < host.len() {
+        let n = (host.len() - i).min(buf.len());
+        let mut j = 0;
+        while j < n {
+            buf[j] = crate::encoding::ascii_lower_byte(host[i + j]);
+            j += 1;
+        }
+        h.write(&buf[..n]);
+        i += n;
+    }
+    h.finish()
+}
+
 pub fn host_of_into(url: &str, out: &mut compact_str::CompactString) {
     let a = split_authority(url);
     out.clear();
-    for &b in a.host.as_bytes() {
-        out.push(char::from(b.to_ascii_lowercase()));
-    }
+    crate::encoding::push_ascii_case_into(out, a.host, false);
 }
 
 #[inline]

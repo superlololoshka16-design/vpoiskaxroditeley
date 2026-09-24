@@ -145,8 +145,8 @@ impl AppState {
     pub async fn create_task(&self, kind: TaskKind) -> Result<TaskId, String> {
         let url = kind.url_ref();
         if !url.is_empty() {
-            let scheme = url.as_bytes().split(|&b| b == b':').next().unwrap_or(b"");
-            if !scheme.eq_ignore_ascii_case(b"http") && !scheme.eq_ignore_ascii_case(b"https") {
+            let scheme = url.split(':').next().unwrap_or("");
+            if !core_utils::url::scheme_is_http(scheme) {
                 return Err("bad url".into());
             }
         }
@@ -283,7 +283,7 @@ async fn fetch_json(
     selectors: &[(String, String)],
     proxy: Option<&str>,
 ) -> Result<sonic_rs::Value, String> {
-    let out = flow::visit(&st.ctx, url, selectors, proxy).await;
+    let out = flow::visit(&st.ctx, flow::VisitReq { url, selectors, proxy }).await;
     if let Some(e) = out.error {
         return Err(e);
     }
@@ -302,12 +302,14 @@ async fn fetch_json(
     if !last.anubis_terminal() {
         if let Some(route) = last.fetched.page.telemetry_route.clone() {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            let mut scoped = session_state::CookieJar::new();
+            scoped.copy_matching(&last.session.jar, last.fetched.uri.as_str());
             let _ = st
                 .fleet_tx
                 .send(FleetMsg::Attach {
                     profile: Arc::clone(&last.session.profile),
-                    origin: last.fetched.uri.clone(),
-                    cookies: last.session.jar.clone(),
+                    origin: compact_str::CompactString::from(last.fetched.uri.as_str()),
+                    cookies: scoped,
                     route,
                     engine_slot: last.slot,
                     weight: 8,
@@ -316,7 +318,7 @@ async fn fetch_json(
                 .await;
             let tab = reply_rx.await.unwrap_or(u32::MAX);
             vset(
-                &mut v,
+                &v,
                 "telemetry",
                 sonic_rs::json!({ "attached": tab != u32::MAX, "tabId": tab }),
             );
@@ -326,12 +328,16 @@ async fn fetch_json(
             &last.fetched.page.challenge,
         ) {
             note_build_change(&st.monitor, url.as_str(), script, &st.monitor_alerts);
-            watch_put(&st.watched, url.as_str(), watch_rec(false, script.clone()));
+            watch_put(
+                &st.watched,
+                url.as_str(),
+                watch_rec(false, bytes::Bytes::clone(script)),
+            );
         } else if let Some(script) = &last.fetched.page.challenge {
             watch_put(
                 &st.watched,
                 last.url.as_str(),
-                watch_rec(true, script.clone()),
+                watch_rec(true, bytes::Bytes::clone(script)),
             );
         }
     }
@@ -491,7 +497,7 @@ async fn solve_json(cx: SolveCtx<'_>, kind: &str) -> Result<sonic_rs::Value, Str
     };
     let raw = script_raw_of(cx.script, cx.payload_b64, what)?;
     if kind == "anubis" {
-        let (ch, sol) = flow::solve_anubis(ctx, raw, CHALLENGE_LOCAL, &profile, 0).await?;
+        let (ch, sol) = flow::solve_anubis(flow::AnubisReq { ctx, raw, href: CHALLENGE_LOCAL, profile: &profile, slot: 0 }).await?;
         return Ok(sonic_rs::json!({
             "solved": true,
             "algorithm": ch.algorithm.name(),

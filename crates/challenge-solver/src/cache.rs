@@ -1,19 +1,18 @@
-use crate::PaddedAtomicUsize;
 use core_utils::xxh3;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-static EVICT_ROTATE: PaddedAtomicUsize = PaddedAtomicUsize(AtomicUsize::new(0));
-
-
-struct CacheEntry {
+#[repr(C, align(64))]
+struct RingSlot {
+    key: AtomicU64,
     x: u32,
     y: u32,
-    hits: u32,
+    _pad: [u32; 10],
 }
 
 pub struct AnswerCache {
-    map: scc::HashMap<u64, CacheEntry>,
-    cap: usize,
+    slots: Vec<RingSlot>,
+    mask: usize,
+    len: AtomicU64,
 }
 
 impl Default for AnswerCache {
@@ -24,56 +23,47 @@ impl Default for AnswerCache {
 
 impl AnswerCache {
     pub fn new(cap: usize) -> Self {
+        let pow = cap.max(64).next_power_of_two();
+        let mut slots = Vec::with_capacity(pow);
+        for _ in 0..pow {
+            slots.push(RingSlot {
+                key: AtomicU64::new(0),
+                x: 0,
+                y: 0,
+                _pad: [0; 10],
+            });
+        }
         AnswerCache {
-            map: scc::HashMap::new(),
-            cap: cap.max(64),
+            slots,
+            mask: pow - 1,
+            len: AtomicU64::new(0),
         }
     }
 
     pub fn lookup(&self, key: u64) -> Option<(u32, u32)> {
-        self.map.read_sync(&key, |_, e| (e.x, e.y))
+        let slot = &self.slots[key as usize & self.mask];
+        if slot.key.load(Ordering::Acquire) != key {
+            return None;
+        }
+        Some((slot.x, slot.y))
     }
 
     pub fn record(&self, key: u64, x: u32, y: u32) {
-        if self.map.update_sync(&key, |_, e| e.hits += 1).is_some() {
+        let slot = &self.slots[key as usize & self.mask];
+        let old_key = slot.key.load(Ordering::Acquire);
+        if old_key == key {
             return;
         }
-        if self.map.len() >= self.cap {
-            self.evict();
+        if old_key == 0 {
+            self.len.fetch_add(1, Ordering::Relaxed);
         }
-        let _ = self.map.insert_sync(key, CacheEntry { x, y, hits: 1 });
-    }
-
-    fn evict(&self) {
-        let skip = EVICT_ROTATE.0.fetch_add(1, Ordering::Relaxed) % self.cap.max(1);
-        let mut skipped = 0usize;
-        let mut victims: smallvec::SmallVec<[(u64, u32); 64]> = smallvec::SmallVec::new();
-        self.map.iter_sync(|k, v| {
-            if skipped < skip {
-                skipped += 1;
-                return true;
-            }
-            if victims.len() < 64 {
-                victims.push((*k, v.hits));
-            }
-            true
-        });
-        if victims.is_empty() {
-            self.map.iter_sync(|k, v| {
-                if victims.len() < 64 {
-                    victims.push((*k, v.hits));
-                }
-                victims.len() < 64
-            });
-        }
-        victims.sort_unstable_by_key(|&(_, h)| h);
-        for (k, _) in victims.iter().take(victims.len().div_ceil(2)) {
-            let _ = self.map.remove_sync(k);
-        }
+        slot.x = x;
+        slot.y = y;
+        slot.key.store(key, Ordering::Release);
     }
 
     pub fn len(&self) -> usize {
-        self.map.len()
+        self.len.load(Ordering::Acquire) as usize
     }
 }
 

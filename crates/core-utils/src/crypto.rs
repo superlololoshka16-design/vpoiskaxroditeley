@@ -1,5 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
+use compact_str::CompactString;
 use hmac::SimpleHmac;
 use md5::Digest as _;
 #[cfg(target_arch = "x86_64")]
@@ -113,7 +114,7 @@ pub fn lz_words_be(words: &[u32]) -> u32 {
 
 #[inline]
 pub fn be32_words(digest: &[u8; 32]) -> [u32; 8] {
-    std::array::from_fn(|i| u32::from_be_bytes(digest[i * 4..i * 4 + 4].try_into().unwrap()))
+    std::array::from_fn(|i| digest.be_u32(i * 4))
 }
 
 #[inline]
@@ -720,12 +721,7 @@ pub fn pair_mut(st: &mut [[u32; 8]; 8], i: usize) -> (&mut [u32; 8], &mut [u32; 
 
 #[inline]
 pub fn state_of(digest: &[u8; 32]) -> [u32; 8] {
-    let mut s = [0u32; 8];
-    for (i, w) in s.iter_mut().enumerate() {
-        let o = i * 4;
-        *w = u32::from_be_bytes([digest[o], digest[o + 1], digest[o + 2], digest[o + 3]]);
-    }
-    s
+    be32_words(digest)
 }
 
 #[inline]
@@ -832,6 +828,17 @@ pub(crate) fn xxh3_seed_tail(seed: u64, tail: &[u8]) -> u64 {
     h.finish()
 }
 
+
+pub fn canvas_hex_of(seed: u64, vendor: &str, renderer: &str) -> CompactString {
+    let mut h = sha2::Sha256::new();
+    h.update(seed.to_le_bytes());
+    h.update((vendor.len() as u64).to_le_bytes());
+    h.update(vendor.as_bytes());
+    h.update((renderer.len() as u64).to_le_bytes());
+    h.update(renderer.as_bytes());
+    let digest: [u8; 32] = h.finalize().into();
+    crate::encoding::hex_compact(&digest, false)
+}
 
 #[inline]
 pub fn sha_tail_pad(dst: &mut [u8], at: usize, bit_len: u64) {

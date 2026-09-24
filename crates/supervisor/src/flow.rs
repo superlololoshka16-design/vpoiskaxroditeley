@@ -194,7 +194,7 @@ pub async fn run_challenge(
     f: &Fetched,
     slot: usize,
 ) -> Option<ChallengeOutcome> {
-    let script = f.page.challenge.clone()?;
+    let script = bytes::Bytes::clone(f.page.challenge.as_ref()?);
     ctx.stats.add_script();
     let cookie = session
         .jar
@@ -249,26 +249,29 @@ pub async fn exec_anubis(
     }
 }
 
+pub struct AnubisReq<'a> {
+    pub ctx: &'a VisitCtx,
+    pub raw: bytes::Bytes,
+    pub href: &'a str,
+    pub profile: &'a Arc<Profile>,
+    pub slot: usize,
+}
+
 pub async fn solve_anubis(
-    ctx: &VisitCtx,
-    raw: bytes::Bytes,
-    href: &str,
-    profile: &Arc<Profile>,
-    slot: usize,
+    req: AnubisReq<'_>,
 ) -> Result<(anubis_solver::AnubisChallenge, anubis_solver::SolvedAnubis), String> {
-    let ch = anubis_solver::AnubisChallenge::parse(&raw).map_err(|e| format!("{e:?}"))?;
-    ctx.stats.add_script();
+    let ch = anubis_solver::AnubisChallenge::parse(&req.raw).map_err(|e| format!("{e:?}"))?;
+    req.ctx.stats.add_script();
     let sol = exec_anubis(
-        &ctx.pool,
-        raw,
-        ProfileSnap::from_parts(profile, href, ""),
-        ctx.timeout,
-        slot,
+        &req.ctx.pool,
+        req.raw,
+        ProfileSnap::from_parts(req.profile, req.href, ""),
+        req.ctx.timeout,
+        req.slot,
     )
     .await?;
     Ok((ch, sol))
 }
-
 pub async fn fetch_counted(
     ctx: &VisitCtx,
     slot: usize,
@@ -298,21 +301,19 @@ pub async fn anubis_page_flow(
     session: &mut Session,
     url: &str,
     f: &Fetched,
-    anub: &[u8],
+    anub: &bytes::Bytes,
     slot: usize,
 ) -> Result<AnubisFlow, String> {
     let t0 = Instant::now();
-    let (ch, sol) = solve_anubis(
+    let raw = bytes::Bytes::clone(anub);
+    let (ch, sol) = solve_anubis(AnubisReq {
         ctx,
-        bytes::Bytes::copy_from_slice(anub),
-        url,
-        &session.profile,
+        raw,
+        href: url,
+        profile: &session.profile,
         slot,
-    )
+    })
     .await?;
-    let real_solve_ms = t0.elapsed().as_millis() as f64;
-    let emu_ms = sol.elapsed_time_ms;
-    let hold_ms = (emu_ms - real_solve_ms).max(0.0).min(30_000.0);
     if hold_ms > 1.0 {
         tokio::time::sleep(std::time::Duration::from_millis(hold_ms as u64)).await;
     }
@@ -412,15 +413,20 @@ async fn robots_allows(ctx: &VisitCtx, url: &str, slot: usize) -> bool {
     let path = core_utils::path_of(url);
     ctx.robots.is_allowed(host.as_str(), path)
 }
+pub struct VisitReq<'a> {
+    pub url: &'a str,
+    pub selectors: &'a [(String, String)],
+    pub proxy: Option<&'a str>,
+}
 
-pub async fn visit(
-    ctx: &VisitCtx,
-    url: &str,
-    selectors: &[(String, String)],
-    proxy: Option<&str>,
-) -> VisitOutcome {
+pub async fn visit(ctx: &VisitCtx, req: VisitReq<'_>) -> VisitOutcome {
+    let VisitReq {
+        url: req_url,
+        selectors,
+        proxy,
+    } = req;
     let mut hops: Vec<HopOutcome> = Vec::new();
-    let mut url = CompactString::from(url);
+    let mut url = CompactString::from(req_url);
     let mut depth = 0u8;
     let mut reslot_cache: SmallVec<[(usize, Arc<Profile>); 4]> = SmallVec::new();
     let mut session = Session::new(Arc::clone(&ctx.profiles[0]), url.as_str());
@@ -471,7 +477,7 @@ pub async fn visit(
             Err(e) => bail!(e),
         };
         let mut anubis = None;
-        if let Some(anub) = fetched.page.anubis.as_deref() {
+        if let Some(anub) = fetched.page.anubis.as_ref() {
             anubis =
                 Some(anubis_page_flow(ctx, &mut session, url.as_str(), &fetched, anub, slot).await);
         }

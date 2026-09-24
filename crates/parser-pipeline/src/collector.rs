@@ -102,7 +102,7 @@ pub(crate) struct Collector {
     extract_keys: Vec<CompactString>,
     extracted_ids: Vec<Option<CompactString>>,
     next_data: Option<NextData>,
-    anubis: Option<SmallVec<[u8; 2048]>>,
+    anubis: Option<Bytes>,
     anubis_version: Option<CompactString>,
     captcha_family: Option<u8>,
     captcha_sitekey: Option<CompactString>,
@@ -179,7 +179,7 @@ impl Collector {
             }
             ScriptEvKind::Anubis => {
                 if !cap.over && !cap.buf.is_empty() && self.anubis.is_none() {
-                    self.anubis = Some(cap.buf);
+                    self.anubis = Some(Bytes::from(cap.buf.into_vec()));
                 }
             }
             ScriptEvKind::AnubisVersion => {
@@ -565,7 +565,7 @@ pub struct PageData {
     pub dom: DomTree,
     pub extracted: BTreeMap<CompactString, CompactString>,
     pub next_data: Option<NextData>,
-    pub anubis: Option<SmallVec<[u8; 2048]>>,
+    pub anubis: Option<Bytes>,
     pub anubis_version: Option<CompactString>,
     pub bytes_fed: u64,
     pub utf8_bad_chunks: u32,

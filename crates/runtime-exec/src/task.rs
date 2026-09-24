@@ -332,6 +332,16 @@ impl FetchReply {
     }
 }
 
+pub struct FetchCtx<'a> {
+    pub url: &'a str,
+    pub method: &'a str,
+    pub headers: HeaderList,
+    pub body: Option<Bytes>,
+    pub cookie: CompactString,
+    pub net_slot: usize,
+    pub timeout: Duration,
+}
+
 pub struct FetchJob {
     pub url: CompactString,
     pub method: CompactString,
@@ -352,30 +362,21 @@ pub fn installed() -> bool {
     BRIDGE.get().is_some()
 }
 
-pub fn dispatch(
-    url: &str,
-    method: &str,
-    headers: HeaderList,
-    body: Option<Bytes>,
-    cookie: CompactString,
-    net_slot: usize,
-    timeout: Duration,
-) -> Option<FetchReply> {
+pub fn dispatch(ctx: FetchCtx<'_>) -> Option<FetchReply> {
     let tx = BRIDGE.get()?;
     let (r_tx, r_rx) = crossbeam_channel::bounded(1);
     let job = FetchJob {
-        url: CompactString::new(url),
-        method: CompactString::new(method),
-        headers,
-        body,
-        cookie,
-        net_slot,
+        url: CompactString::new(ctx.url),
+        method: CompactString::new(ctx.method),
+        headers: ctx.headers,
+        body: ctx.body,
+        cookie: ctx.cookie,
+        net_slot: ctx.net_slot,
         reply: r_tx,
     };
     tx.send(job).ok()?;
-    r_rx.recv_timeout(timeout.max(MIN_BUDGET)).ok()
+    r_rx.recv_timeout(ctx.timeout.max(MIN_BUDGET)).ok()
 }
-
 pub fn deadline_budget(deadline: Instant, cap: Duration) -> Duration {
     deadline
         .checked_duration_since(Instant::now())

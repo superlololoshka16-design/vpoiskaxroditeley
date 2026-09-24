@@ -9,7 +9,7 @@ name = "challenge_solver"
 path = "src/lib.rs"
 
 [dependencies]
-bumpalo = { workspace = true }
+parking_lot = "0.12"
 core-utils = { workspace = true }
 memmap2 = { workspace = true }
 smallvec = { workspace = true, features = ["const_generics"] }

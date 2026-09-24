@@ -1,6 +1,7 @@
 use std::hash::Hasher as _;
 
 use crate::rng::mix_ctx;
+use crate::BytesExt as _;
 
 pub const BLANK_HASH: u64 = 0x0B1A_4B1A_4C0D_E511;
 
@@ -55,14 +56,6 @@ pub fn pow_elapsed_ms(attempts: u64, cpu_scale: f64, jitter: f64) -> f64 {
     (calc_ms + POW_OVERHEAD_BASE_MS) * (1.0 + POW_JITTER_SIGMA * jitter)
 }
 
-pub const CLICK_PRE_PRESS_MEDIAN_MS: f64 = 40.0;
-pub const CLICK_PRE_PRESS_SIGMA: f64 = 0.3;
-pub const CLICK_GAP_MEDIAN_MS: f64 = 70.0;
-pub const CLICK_GAP_SIGMA: f64 = 0.35;
-pub const CLICK_DOUBLE_GAP_MEDIAN_MS: f64 = 110.0;
-pub const CLICK_DOUBLE_GAP_SIGMA: f64 = 0.25;
-pub const SCROLL_NOTCH_GAP_SIGMA: f64 = 0.30;
-
 pub fn canvas_hex_into(canvas_seed: u64, vendor: &[u8], renderer: &[u8], out: &mut [u8; 64]) {
     let mut st = crate::crypto::H0;
     let mut off = 0usize;
@@ -116,9 +109,5 @@ pub fn canvas_hex_into(canvas_seed: u64, vendor: &[u8], renderer: &[u8], out: &m
         crate::crypto::sha256_block(&mut st, &tail);
     }
     let digest = crate::crypto::words_be32(&st);
-    let hex = b"0123456789abcdef";
-    for (i, b) in digest.iter().enumerate() {
-        out[i * 2] = hex[usize::from(b >> 4)];
-        out[i * 2 + 1] = hex[usize::from(b & 0xF)];
-    }
+    digest.hex_lower_into(out);
 }

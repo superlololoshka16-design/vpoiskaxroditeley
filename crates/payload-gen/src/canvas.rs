@@ -35,26 +35,12 @@ const BLACK: Rgba8 = Rgba8 {
 };
 
 #[inline]
-fn hex_val(c: u8) -> u8 {
-    match c {
-        b'0'..=b'9' => c - b'0',
-        b'a'..=b'f' => c - b'a' + 10,
-        b'A'..=b'F' => c - b'A' + 10,
-        _ => 0,
-    }
-}
-
-#[inline]
-fn hex_pair(b: &[u8], i: usize) -> u8 {
-    hex_val(b[i]) * 16 + hex_val(b[i + 1])
-}
-
 fn parse_hex_color(hex: &str) -> Rgba8 {
     let b = hex.as_bytes();
     if !b.iter().all(|c| c.is_ascii_hexdigit()) {
         return BLACK;
     }
-    let d = |i: usize| hex_val(b[i]);
+    let d = |i: usize| core_utils::hex_val(b[i]);
     match b.len() {
         3 => Rgba8 {
             r: d(0) * 17,
@@ -69,16 +55,16 @@ fn parse_hex_color(hex: &str) -> Rgba8 {
             a: d(3) * 17,
         },
         6 => Rgba8 {
-            r: hex_pair(b, 0),
-            g: hex_pair(b, 2),
-            b: hex_pair(b, 4),
+            r: b.hex_byte(0),
+            g: b.hex_byte(2),
+            b: b.hex_byte(4),
             a: 255,
         },
         8 => Rgba8 {
-            r: hex_pair(b, 0),
-            g: hex_pair(b, 2),
-            b: hex_pair(b, 4),
-            a: hex_pair(b, 6),
+            r: b.hex_byte(0),
+            g: b.hex_byte(2),
+            b: b.hex_byte(4),
+            a: b.hex_byte(6),
         },
         _ => BLACK,
     }
@@ -825,7 +811,15 @@ pub fn png_data_url_pixels(w: u32, h: u32, pixels: &[u8]) -> String {
 
 
 pub use core_utils::bench::bench_jitter;
-pub use core_utils::profile::canvas_time_cost_us;
+
+const CANVAS_COST_MS: [f64; 5] = [0.0016, 0.0042, 0.028, 0.055, 0.0009];
+
+pub fn canvas_time_cost_us(op: u8, cpu_scale: f64, gauss: f64) -> u64 {
+    let i = usize::from(op) % CANVAS_COST_MS.len();
+    let ms = (CANVAS_COST_MS[i] * core_utils::bench::bench_scale(cpu_scale, bench_jitter(gauss)))
+        .max(0.0001);
+    (ms * 1000.0).max(1.0) as u64
+}
 
 const AUDIO_ROOT: u64 = core_utils::rng::seeds::SALT_AUDIO_ROOT;
 const S_AUDIO_CHANNEL: u64 = core_utils::rng::seeds::SALT_AUDIO_CHANNEL;
@@ -906,28 +900,51 @@ pub fn webgl_param(seed: u64, slot: u8) -> f64 {
         .f64_in(lo, hi)
 }
 
+#[inline(always)]
+fn pixel_channel(
+    base: i32,
+    phase: i32,
+    seed_dh: u64,
+    x: u32,
+    y: u32,
+) -> u8 {
+    let grad = (((x >> 2) as i32)
+        .wrapping_add((y >> 2) as i32)
+        .wrapping_add(phase))
+        & 63;
+    let dither = (farble_hash(seed_dh, x as u64, y as u64) & 1) as i32;
+    (base + ((grad - 32) >> 2) + dither).clamp(0, 255) as u8
+}
+
 pub fn pixel_at(seed: u64, draw_hash: u64, x: u32, y: u32, c: u32) -> u8 {
     if c == 3 {
         return 255;
     }
-    farble_hash(
-        seed ^ draw_hash.rotate_left(13) ^ (c as u64).wrapping_mul(core_utils::rng::seeds::SALT_PIXEL_CHAN),
-        x as u64,
-        y as u64,
-    ) as u8
+    let chan = (c as u64).wrapping_mul(core_utils::rng::seeds::SALT_PIXEL_CHAN);
+    let base = (farble_hash(seed ^ chan, 0, 0) & 0xFF) as i32;
+    let phase = (farble_hash(draw_hash, 1, 1) & 31) as i32;
+    pixel_channel(base, phase, base as u64 ^ draw_hash, x, y)
 }
 
 pub fn fill_pixels(buf: &mut [u8], w: u32, seed: u64, draw_hash: u64) {
     let w = w.max(1) as usize;
-    let mut x = 0usize;
-    let mut y = 0usize;
+    let phase = (farble_hash(draw_hash, 1, 1) & 31) as i32;
+    let salt = core_utils::rng::seeds::SALT_PIXEL_CHAN;
+    let b0 = (farble_hash(seed, 0, 0) & 0xFF) as i32;
+    let b1 = (farble_hash(seed ^ salt, 0, 0) & 0xFF) as i32;
+    let b2 = (farble_hash(seed ^ salt.wrapping_mul(2), 0, 0) & 0xFF) as i32;
+    let d0 = b0 as u64 ^ draw_hash;
+    let d1 = b1 as u64 ^ draw_hash;
+    let d2 = b2 as u64 ^ draw_hash;
+    let mut x = 0u32;
+    let mut y = 0u32;
     for px in buf.chunks_exact_mut(4) {
-        px[0] = pixel_at(seed, draw_hash, x as u32, y as u32, 0);
-        px[1] = pixel_at(seed, draw_hash, x as u32, y as u32, 1);
-        px[2] = pixel_at(seed, draw_hash, x as u32, y as u32, 2);
+        px[0] = pixel_channel(b0, phase, d0, x, y);
+        px[1] = pixel_channel(b1, phase, d1, x, y);
+        px[2] = pixel_channel(b2, phase, d2, x, y);
         px[3] = 255;
         x += 1;
-        if x == w {
+        if x as usize == w {
             x = 0;
             y += 1;
         }

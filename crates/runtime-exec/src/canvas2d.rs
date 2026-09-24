@@ -6,7 +6,7 @@ use core_utils::rng::mix_ctx;
 use core_utils::bump_u32_id;
 use payload_gen::{
     CANVAS_MAX_DIM, CANVAS_OP_FILL_RECT, CANVAS_OP_FILL_TEXT, CANVAS_OP_GET_IMAGE_DATA, CANVAS_OP_MEASURE,
-    CANVAS_OP_TO_URL, CanvasRaster, READBACK_MAX,
+    CANVAS_OP_TO_URL, CanvasRaster, READBACK_MAX, canvas_time_cost_us,
     png_data_url_pixels, webgl_int_param, webgl_param,
 };
 use rquickjs::IntoJs as _;
@@ -18,6 +18,7 @@ use std::cell::RefCell;
 use std::hash::Hasher as _;
 use core_utils::xxh3::XxHash3_64;
 
+const BLANK_HASH: u64 = 0x0B1A_4B1A_4C0D_E511;
 
 #[derive(Clone)]
 pub(crate) struct Canvas2DState {
@@ -116,7 +117,11 @@ impl Canvas2DState {
     }
 
     fn draw_hash(&self, epoch: u32) -> u64 {
-        core_utils::profile::draw_hash(self.hasher.finish(), self.ops, !self.live(epoch))
+        if !self.live(epoch) {
+            BLANK_HASH
+        } else {
+            self.hasher.finish().wrapping_add(self.ops as u64)
+        }
     }
 }
 
@@ -137,12 +142,12 @@ fn gauss() -> f64 {
 }
 
 fn pay_cost(op: u8) {
-    let cost = core_utils::profile::canvas_time_cost_us(op, prof_cpu_scale(), gauss());
+    let cost = canvas_time_cost_us(op, prof_cpu_scale(), gauss());
     clock::add_offset_us(cost);
 }
 
 fn seed_for(canvas_id: u32) -> u64 {
-    core_utils::profile::canvas_seed_of(canvas_id, prof_raster_seed())
+    mix_ctx(prof_raster_seed(), canvas_id as u64)
 }
 
 #[derive(Trace, JsLifetime, Clone)]
@@ -1072,7 +1077,7 @@ pub(crate) struct WebGLRenderingContext {
 }
 
 fn build_gl<'js>(ctx: &Ctx<'js>, canvas_id: u32, es2: bool) -> rquickjs::Result<Object<'js>> {
-    let gl_seed = core_utils::profile::gl_seed_of(prof_raster_seed(), canvas_id, canvas_epoch(canvas_id));
+    let gl_seed = mix_ctx(seed_for(canvas_id), canvas_epoch(canvas_id) as u64);
     let class: Class<WebGLRenderingContext> = Class::instance(
         ctx.clone(),
         WebGLRenderingContext {
@@ -1263,7 +1268,7 @@ impl WebGLRenderingContext {
         let draw_hash = ctx_slot(&c, &CTX2D, self.canvas_id)
             .and_then(|o| Class::<CanvasRenderingContext2D>::from_object(&o))
             .map(|class| class.borrow().st.borrow().draw_hash(epoch))
-            .unwrap_or(core_utils::profile::BLANK_HASH);
+            .unwrap_or(BLANK_HASH);
         let seed = mix_ctx(seed_for(self.canvas_id), draw_hash);
         if let Some(bytes) = (unsafe {
             crate::webidl::ta_bytes_mut(&pixels).or_else(|| crate::webidl::ab_bytes_mut(&pixels))

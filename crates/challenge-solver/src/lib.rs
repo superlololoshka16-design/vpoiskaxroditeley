@@ -123,7 +123,7 @@ pub fn solve(ch: &Challenge) -> Option<Solution> {
 pub fn solve_until(ch: &Challenge, deadline: std::time::Instant) -> Option<Solution> {
     ch.validate().ok()?;
     let abort = Arc::new(AtomicBool::new(false));
-    let mut guard = DeadlineWatch::spawn(deadline, Arc::clone(&abort));
+    let guard = DeadlineWatch::arm(deadline, Arc::clone(&abort));
     let r = match ch.algorithm {
         Algorithm::Sha256 => pow::solve_until(&ch.salt, ch.difficulty, ch.threads, &abort),
         Algorithm::HmacSha256 => {
@@ -145,62 +145,55 @@ pub fn solve_until(ch: &Challenge, deadline: std::time::Instant) -> Option<Solut
             &abort,
         ),
     };
-    guard.disarm();
-    let timed_out = abort.load(Ordering::Acquire);
+    drop(guard);
+    let timed_out = abort.load(Ordering::Acquire) || WATCH.abort.load(Ordering::Acquire);
     if timed_out {
         return None;
     }
     r.map(|(nonce, digest)| Solution { nonce, digest })
 }
-
-struct DeadlineWatch {
-    stop: Arc<AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
+#[repr(align(64))]
+struct WatchArm {
+    abort: AtomicBool,
+    active: AtomicBool,
+    deadline: parking_lot::Mutex<std::time::Instant>,
 }
 
-impl DeadlineWatch {
-    fn spawn(deadline: std::time::Instant, abort: Arc<AtomicBool>) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop2 = Arc::clone(&stop);
-        let handle = std::thread::Builder::new()
-            .name("pow-deadline".into())
-            .spawn({
-                use std::sync::atomic::Ordering;
-                move || {
-                    let min_step = std::time::Duration::from_micros(200);
-                    let max_step = std::time::Duration::from_millis(4);
-                    loop {
-                        if stop2.load(Ordering::Relaxed) || abort.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        if std::time::Instant::now() >= deadline {
-                            abort.store(true, Ordering::Release);
-                            return;
-                        }
-                        let left = deadline.saturating_duration_since(std::time::Instant::now());
-                        let step = left.min(max_step).max(min_step);
-                        std::thread::sleep(step);
-                    }
-                }
-            })
-            .ok();
-        Self { stop, handle }
-    }
+static WATCH: WatchArm = WatchArm {
+    abort: AtomicBool::new(false),
+    active: AtomicBool::new(false),
+    deadline: parking_lot::Mutex::new(std::time::Instant::now()),
+};
 
-
-    fn disarm(mut self) {
-        self.stop.store(true, Ordering::Release);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
+impl WatchArm {
+    fn check(&self) {
+        if !self.active.load(Ordering::Acquire) {
+            return;
         }
+        if std::time::Instant::now() >= *self.deadline.lock() {
+            self.abort.store(true, Ordering::Release);
+            self.active.store(false, Ordering::Release);
+        }
+    }
+}
+
+pub(crate) fn watch_fired() -> bool {
+    WATCH.check();
+    WATCH.abort.load(Ordering::Acquire)
+}
+struct DeadlineWatch;
+
+impl DeadlineWatch {
+    fn arm(deadline: std::time::Instant, _abort: Arc<AtomicBool>) -> Self {
+        *WATCH.deadline.lock() = deadline;
+        WATCH.abort.store(false, Ordering::Release);
+        WATCH.active.store(true, Ordering::Release);
+        DeadlineWatch
     }
 }
 
 impl Drop for DeadlineWatch {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
+        WATCH.active.store(false, Ordering::Release);
     }
 }

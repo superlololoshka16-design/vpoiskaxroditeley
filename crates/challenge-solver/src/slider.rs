@@ -166,20 +166,19 @@ unsafe fn ssd_row8_avx2(
     piece: &[u8],
     base: usize,
     pi: usize,
+    masks: &[std::arch::x86_64::__m256i; 3],
     acc: &mut std::arch::x86_64::__m256i,
 ) {
     use std::arch::x86_64::*;
     unsafe {
         let px = _mm256_loadu_si256(bg.as_ptr().add(base) as *const __m256i);
-        CHAN_SHUFFLE.with(|masks| {
-            for c in 0..3usize {
-                let ch16 = _mm256_shuffle_epi8(px, masks[c]);
-                let ch = _mm256_srli_epi16::<8>(ch16);
-                let p = _mm256_set1_epi16(*piece.get_unchecked(pi + c) as i16);
-                let d = _mm256_sub_epi16(ch, p);
-                *acc = _mm256_add_epi32(*acc, _mm256_madd_epi16(d, d));
-            }
-        });
+        for c in 0..3usize {
+            let ch16 = _mm256_shuffle_epi8(px, masks[c]);
+            let ch = _mm256_srli_epi16::<8>(ch16);
+            let p = _mm256_set1_epi16(*piece.get_unchecked(pi + c) as i16);
+            let d = _mm256_sub_epi16(ch, p);
+            *acc = _mm256_add_epi32(*acc, _mm256_madd_epi16(d, d));
+        }
     }
 }
 const SSD_FLUSH_EVERY: usize = 8192;
@@ -190,6 +189,7 @@ unsafe fn ssd_block8_avx2(
     piece: &[u8],
     row_base: &[usize],
     offs: &[MaskOff],
+    masks: &[std::arch::x86_64::__m256i; 3],
     xb4: usize,
     acc64: &mut [u64; 8],
 ) {
@@ -202,13 +202,13 @@ unsafe fn ssd_block8_avx2(
                 piece,
                 row_base[j] + xb4,
                 off.pi as usize,
+                masks,
                 &mut acc8,
             );
         }
         flush_acc8(acc8, acc64);
     }
 }
-
 fn scan(
     ex: &SliderExchange,
     mo: &MaskOffsets,
@@ -226,6 +226,8 @@ fn scan(
     let avx2 = false;
 
     let stride = (bg_w * 4) as usize;
+    #[cfg(target_arch = "x86_64")]
+    let masks: [std::arch::x86_64::__m256i; 3] = CHAN_SHUFFLE.with(|m| *m);
     let mut row_base: SmallVec<[usize; 1024]> = SmallVec::with_capacity(offs.len());
     for off in offs {
         row_base.push(((y0 + off.dy) * bg_w + off.dx) as usize * 4);
@@ -243,6 +245,7 @@ fn scan(
                         &ex.piece,
                         &row_base,
                         offs,
+                        &masks,
                         xb as usize * 4,
                         &mut acc64,
                     )

@@ -162,9 +162,9 @@ impl CookieJar {
     pub fn new() -> Self {
         Self::default()
     }
-
     pub fn clear(&mut self) {
         self.map.clear();
+        self.by_name.clear();
         self.next_seq = 0;
     }
     pub fn len(&self) -> usize {
@@ -194,8 +194,9 @@ impl CookieJar {
             if !path_matches(path.as_str(), cpath.as_str()) {
                 continue;
             }
-            let creation_seq = match self.map.get(&(name, domain, cpath)) {
-                Some(e) => e.creation_seq,
+            let existing = self.map.get_index_of(&(name, domain, cpath));
+            let creation_seq = match existing {
+                Some(idx) => self.map.get_index(idx).map(|(_, e)| e.creation_seq).unwrap_or_default(),
                 None => {
                     let seq = self.next_seq;
                     self.next_seq = self.next_seq.wrapping_add(1);
@@ -215,6 +216,19 @@ impl CookieJar {
                     creation_seq,
                 },
             );
+            if existing.is_none() {
+                let idx = (self.map.len() - 1) as u32;
+                match self.by_name.get_mut(name) {
+                    Some(v) => v.push(idx),
+                    None => {
+                        self.by_name.insert(CompactString::new(name), {
+                            let mut v = SmallVec::new();
+                            v.push(idx);
+                            v
+                        });
+                    }
+                }
+            }
         }
     }
     pub fn ingest(&mut self, set_cookie: &str) {
@@ -305,28 +319,51 @@ impl CookieJar {
                         victim_idx = i;
                     }
                 }
-                self.map.shift_remove_index(victim_idx);
+                if self.map.shift_remove_index(victim_idx).is_some() {
+                    self.by_name.clear();
+                    for (i, (k, _)) in self.map.iter().enumerate() {
+                        match self.by_name.get_mut(k.0.as_str()) {
+                            Some(v) => v.push(i as u32),
+                            None => {
+                                let mut v = SmallVec::new();
+                                v.push(i as u32);
+                                self.by_name.insert(k.0.clone(), v);
+                            }
+                        }
+                    }
+                }
             }
         }
         let key = (CompactString::new(name), domain, path);
-        let creation_seq = match self.map.get(&key) {
-            Some(existing) => existing.creation_seq,
+        let existing_idx = self.map.get_index_of(&key);
+        let creation_seq = match existing_idx {
+            Some(idx) => self.map.get_index(idx).map(|(_, e)| e.creation_seq).unwrap_or_default(),
             None => {
                 let seq = self.next_seq;
                 self.next_seq = self.next_seq.wrapping_add(1);
                 seq
             }
         };
-        self.map.insert(
-            key,
-            CookieEntry {
-                value: CompactString::new(value),
-                host_only,
-                expires_ms,
-                secure,
-                creation_seq,
-            },
-        );
+        self.map.insert(key, CookieEntry {
+            value: CompactString::new(value),
+            host_only,
+            expires_ms,
+            secure,
+            creation_seq,
+        });
+        if existing_idx.is_none() {
+            let idx = (self.map.len() - 1) as u32;
+            match self.by_name.get_mut(name) {
+                Some(v) => v.push(idx),
+                None => {
+                    self.by_name.insert(CompactString::new(name), {
+                        let mut v = SmallVec::new();
+                        v.push(idx);
+                        v
+                    });
+                }
+            }
+        }
     }
 
 
@@ -338,25 +375,23 @@ impl CookieJar {
 
     pub fn get(&self, name: &str) -> Option<&str> {
         let now = core_utils::unix_ms();
-        self.map
-            .iter()
-            .find(|((n, _, _), e)| n.as_str() == name && e.expires_ms > now)
-            .map(|(_, e)| e.value.as_str())
+        let idxs = self.by_name.get(name)?;
+        idxs.iter().find_map(|&i| {
+            let ((_, _, _), e) = self.map.get_index(i as usize)?;
+            (e.expires_ms > now).then(|| e.value.as_str())
+        })
     }
 
     pub fn get_for_host(&self, name: &str, host: &str) -> Option<&str> {
         let now = core_utils::unix_ms();
         let host = host_key(host);
-        self.map
-            .iter()
-            .find(|((n, d, _), e)| {
-                n.as_str() == name
-                    && domain_matches(host.as_str(), d.as_str(), e.host_only)
-                    && e.expires_ms > now
-            })
-            .map(|(_, e)| e.value.as_str())
+        let idxs = self.by_name.get(name)?;
+        idxs.iter().find_map(|&i| {
+            let ((_, d, _), e) = self.map.get_index(i as usize)?;
+            (domain_matches(host.as_str(), d.as_str(), e.host_only) && e.expires_ms > now)
+                .then(|| e.value.as_str())
+        })
     }
-
     pub fn header_into(&self, out: &mut SmallVec<[u8; 256]>) {
         self.header_for_into("", "", true, out);
     }

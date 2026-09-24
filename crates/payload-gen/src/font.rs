@@ -1,3 +1,4 @@
+use core_utils::BytesExt as _;
 use smallvec::SmallVec;
 use std::sync::LazyLock;
 
@@ -36,76 +37,86 @@ struct TtfTables {
     em_scale: f64,
 }
 
-#[inline]
-fn u16o(d: &[u8], o: usize) -> u16 {
-    u16::from_be_bytes([d[o], d[o + 1]])
-}
-
-#[inline]
-fn i16o(d: &[u8], o: usize) -> i16 {
-    i16::from_be_bytes([d[o], d[o + 1]])
-}
-
-#[inline]
-fn u32o(d: &[u8], o: usize) -> u32 {
-    u32::from_be_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
-}
-
 fn parse_tables(d: &'static [u8]) -> Option<TtfTables> {
     if d.len() < 12 || d[..4] != [0, 1, 0, 0] {
         return None;
     }
-    let num = u16o(d, 4) as usize;
-    let mut cmap = (0, 0);
-    let mut hmtx = (0, 0);
-    let mut glyf = (0, 0);
-    let mut head = (0, 0);
-    let mut hhea = (0, 0);
-    let mut loca = (0, 0);
-    let mut maxp = (0, 0);
+    let num = d.be_u16(4) as usize;
+    if 12 + num.checked_mul(16)? > d.len() {
+        return None;
+    }
+    let mut cmap = (0usize, 0usize);
+    let mut hmtx = (0usize, 0usize);
+    let mut glyf = (0usize, 0usize);
+    let mut head = None;
+    let mut hhea = None;
+    let mut loca = (0usize, 0usize);
+    let mut maxp = None;
     let mut off = 12;
     for _ in 0..num {
-        if off + 16 > d.len() {
-            return None;
-        }
         let t = &d[off..off + 4];
-        let o = u32o(d, off + 8) as usize;
-        let l = u32o(d, off + 12) as usize;
-        match t {
-            b"cmap" => cmap = (o, l),
-            b"hmtx" => hmtx = (o, l),
-            b"glyf" => glyf = (o, l),
-            b"head" => head = (o, l),
-            b"hhea" => hhea = (o, l),
-            b"loca" => loca = (o, l),
-            b"maxp" => maxp = (o, l),
-            _ => {}
+        let o = d.be_u32(off + 8) as usize;
+        let l = d.be_u32(off + 12) as usize;
+        let valid = o.checked_add(l).is_some_and(|e| e <= d.len());
+        if valid {
+            match t {
+                b"cmap" => cmap = (o, l),
+                b"hmtx" => hmtx = (o, l),
+                b"glyf" => glyf = (o, l),
+                b"head" if l >= 54 => head = Some((o, l)),
+                b"hhea" if l >= 36 => hhea = Some((o, l)),
+                b"loca" => loca = (o, l),
+                b"maxp" if l >= 6 => maxp = Some((o, l)),
+                _ => {}
+            }
         }
         off += 16;
     }
-    let units_per_em = u16o(d, head.0 + 18);
+    let (ho, _) = head?;
+    let (hho, _) = hhea?;
+    let (mo, _) = maxp?;
+    let units_per_em = d.be_u16(ho + 18);
     if units_per_em == 0 {
         return None;
     }
-    let loca_long = u16o(d, head.0 + 50) != 0;
-    let n_glyphs = u16o(d, maxp.0 + 4) as usize;
-    let num_h = u16o(d, hhea.0 + 34);
+    let loca_long = d.be_u16(ho + 50) != 0;
+    let n_glyphs = d.be_u16(mo + 4) as usize;
+    let num_h = d.be_u16(hho + 34);
+    if num_h == 0 {
+        return None;
+    }
+    let entry = if loca_long { 4 } else { 2 };
+    let need = (n_glyphs + 1).checked_mul(entry)?;
+    if need > loca.1 || loca.0.checked_add(need)? > d.len() {
+        return None;
+    }
+    if (num_h as usize).checked_mul(4).is_some_and(|n| hmtx.0 + n > d.len()) {
+        return None;
+    }
     let mut locs = Vec::with_capacity(n_glyphs + 1);
     if loca_long {
         for i in 0..=n_glyphs {
-            locs.push(u32o(d, loca.0 + i * 4));
+            locs.push(d.be_u32(loca.0 + i * 4));
         }
     } else {
         for i in 0..=n_glyphs {
-            locs.push(u16o(d, loca.0 + i * 2) as u32 * 2);
+            locs.push(d.be_u16(loca.0 + i * 2) as u32 * 2);
         }
+    }
+    if locs.iter().any(|&o| {
+        o as usize > glyf.1 || glyf.0.checked_add(o as usize).is_none_or(|a| a > d.len())
+    }) {
+        return None;
+    }
+    if cmap.1 < 4 || cmap.0 + 4 > d.len() {
+        return None;
     }
     let em_scale = 1.0 / f64::from(units_per_em);
     Some(TtfTables {
         d,
         units_per_em,
-        ascender: i16o(d, hhea.0 + 4),
-        descender: i16o(d, hhea.0 + 6),
+        ascender: d.be_i16(hho + 4),
+        descender: d.be_i16(hho + 6),
         cmap,
         hmtx,
         num_h,
@@ -121,34 +132,34 @@ fn cmap4_lookup(t: &TtfTables, cp: u32) -> u16 {
     if cl < 4 {
         return 0;
     }
-    let n = u16o(t.d, co + 2) as usize;
+    let n = t.d.be_u16(co + 2) as usize;
     let mut sub: Option<usize> = None;
     for i in 0..n {
-        let pid = u16o(t.d, co + 4 + i * 8);
-        let eid = u16o(t.d, co + 6 + i * 8);
-        let o = u32o(t.d, co + 8 + i * 8) as usize;
-        let fmt = u16o(t.d, co + o);
+        let pid = t.d.be_u16(co + 4 + i * 8);
+        let eid = t.d.be_u16(co + 6 + i * 8);
+        let o = t.d.be_u32(co + 8 + i * 8) as usize;
+        let fmt = t.d.be_u16(co + o);
         if fmt == 4 && ((pid == 3 && eid == 1) || (pid == 0 && (eid == 3 || eid == 4))) {
             sub = Some(co + o);
             break;
         }
     }
     let Some(sub) = sub else { return 0 };
-    let seg_x2 = u16o(t.d, sub + 6) as usize;
+    let seg_x2 = t.d.be_u16(sub + 6) as usize;
     let seg = seg_x2 / 2;
     let end_off = sub + 14;
     let starts = end_off + seg_x2 + 2;
     let deltas = starts + seg_x2;
     let ranges = deltas + seg_x2;
     for i in 0..seg {
-        let end = u16o(t.d, end_off + i * 2) as u32;
+        let end = t.d.be_u16(end_off + i * 2) as u32;
         if cp <= end {
-            let start = u16o(t.d, starts + i * 2) as u32;
+            let start = t.d.be_u16(starts + i * 2) as u32;
             if cp < start {
                 return 0;
             }
-            let delta = i16o(t.d, deltas + i * 2);
-            let rng = u16o(t.d, ranges + i * 2);
+            let delta = t.d.be_i16(deltas + i * 2);
+            let rng = t.d.be_u16(ranges + i * 2);
             if rng == 0 {
                 return (u32::from(cp as u16) .wrapping_add(delta as u32) & 0xFFFF) as u16;
             }
@@ -156,7 +167,7 @@ fn cmap4_lookup(t: &TtfTables, cp: u32) -> u16 {
             if gi_off + 2 > t.d.len() {
                 return 0;
             }
-            let g = u16o(t.d, gi_off);
+            let g = t.d.be_u16(gi_off);
             if g == 0 {
                 return 0;
             }
@@ -173,26 +184,41 @@ fn advance_of(t: &TtfTables, g: u16) -> u16 {
     } else {
         t.num_h as usize - 1
     };
-    u16o(t.d, ho + idx * 4)
+    t.d.be_u16(ho + idx * 4)
+}
+
+#[inline]
+pub fn safe_px(px: f64) -> f64 {
+    if px.is_finite() && px > 0.0 { px } else { 1.0 }
+}
+
+#[inline]
+pub fn px_scale(em_scale: f64, px: f64) -> f64 {
+    em_scale * safe_px(px)
+}
+
+#[inline]
+fn tofu_advance(px: f64) -> f64 {
+    safe_px(px) * 0.5
 }
 
 #[inline]
 pub fn advance_of_cp_pub(kind: FontKind, cp: u32, px: f64) -> f64 {
-    let Some(t) = font_tables(kind) else { return px * 0.5 };
+    let Some(t) = font_tables(kind) else { return tofu_advance(px) };
     advance_of_cp(t, cp, px)
 }
 
 fn advance_of_cp(t: &TtfTables, cp: u32, px: f64) -> f64 {
     let g = cmap4_lookup(t, cp);
     if g == 0 {
-        return px * 0.5;
+        return tofu_advance(px);
     }
-    f64::from(advance_of(t, g)) * t.em_scale * px
+    f64::from(advance_of(t, g)) * px_scale(t.em_scale, px)
 }
 
 pub fn advances(kind: FontKind, text: &str, px: f64) -> SmallVec<[f64; 32]> {
     let Some(t) = font_tables(kind) else {
-        return text.chars().map(|_| px * 0.5).collect();
+        return text.chars().map(|_| tofu_advance(px)).collect();
     };
     text.chars().map(|ch| advance_of_cp(t, ch as u32, px)).collect()
 }
@@ -215,15 +241,15 @@ fn glyph_box(t: &TtfTables, cp: u32) -> Option<GlyphBox> {
         return None;
     }
     let o = t.glyf.0 + start;
-    let ncont = i16o(t.d, o);
+    let ncont = t.d.be_i16(o);
     if ncont <= 0 {
         return None;
     }
     Some(GlyphBox {
-        x0: i16o(t.d, o + 2),
-        y0: i16o(t.d, o + 4),
-        x1: i16o(t.d, o + 6),
-        y1: i16o(t.d, o + 8),
+        x0: t.d.be_i16(o + 2),
+        y0: t.d.be_i16(o + 4),
+        x1: t.d.be_i16(o + 6),
+        y1: t.d.be_i16(o + 8),
     })
 }
 
@@ -246,10 +272,11 @@ impl FontMetrics {
 
     #[inline]
     pub fn scaled(&self, px: f64) -> Self {
+        let s = safe_px(px);
         Self {
-            em_scale: self.em_scale * px,
-            ascender: self.ascender * px,
-            descender: self.descender * px,
+            em_scale: self.em_scale * s,
+            ascender: self.ascender * s,
+            descender: self.descender * s,
         }
     }
 }
@@ -275,43 +302,51 @@ static CONTOUR_CACHE: std::sync::LazyLock<
     scc::HashMap<(u8, u32), SmallVec<[GlyphCmd; 40]>>,
 > = std::sync::LazyLock::new(scc::HashMap::new);
 
+#[inline]
+fn scale_glyphs(out: &mut SmallVec<[GlyphCmd; 40]>, scale: f32) {
+    if scale == 1.0 {
+        return;
+    }
+    for cmd in out.iter_mut() {
+        match cmd {
+            GlyphCmd::MoveTo(x, y) | GlyphCmd::LineTo(x, y) => {
+                *x *= scale;
+                *y *= scale;
+            }
+            GlyphCmd::QuadTo(x, y, ex, ey) => {
+                *x *= scale;
+                *y *= scale;
+                *ex *= scale;
+                *ey *= scale;
+            }
+            GlyphCmd::Close => {}
+        }
+    }
+}
+
 pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[GlyphCmd; 40]>> {
     let t = font_tables(kind)?;
     let gid = u32::from(cmap4_lookup(t, cp));
     if gid == 0 {
         return None;
     }
-    let mut px_scale = (t.em_scale * px) as f32;
-    if px_scale == 0.0 || !px_scale.is_finite() {
-        px_scale = 1.0;
-    }
     let cache_key = (kind as u8, gid);
-    if let Some(hit) = CONTOUR_CACHE.read_sync(&cache_key, |_, v| v.clone()) {
-        if px_scale == 1.0 {
-            return Some(hit);
-        }
-        let mut scaled = hit;
-        for cmd in scaled.iter_mut() {
-            match cmd {
-                GlyphCmd::MoveTo(x, y) => {
-                    *x *= px_scale;
-                    *y *= px_scale;
-                }
-                GlyphCmd::LineTo(x, y) => {
-                    *x *= px_scale;
-                    *y *= px_scale;
-                }
-                GlyphCmd::QuadTo(x, y, ex, ey) => {
-                    *x *= px_scale;
-                    *y *= px_scale;
-                    *ex *= px_scale;
-                    *ey *= px_scale;
-                }
-                GlyphCmd::Close => {}
+    let scale = px_scale(t.em_scale, px) as f32;
+    let mut em = match CONTOUR_CACHE.read_sync(&cache_key, |_, v| v.clone()) {
+        Some(hit) => hit,
+        None => {
+            let decoded = decode_contours_em(t, gid)?;
+            if CONTOUR_CACHE.len() < 65536 && decoded.len() <= 40 {
+                let _ = CONTOUR_CACHE.insert_sync(cache_key, decoded.clone());
             }
+            decoded
         }
-        return Some(scaled);
-    }
+    };
+    scale_glyphs(&mut em, scale);
+    Some(em)
+}
+
+fn decode_contours_em(t: &TtfTables, gid: u32) -> Option<SmallVec<[GlyphCmd; 40]>> {
     let g = gid as usize;
     if g + 1 >= t.loca.len() {
         return None;
@@ -323,17 +358,16 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
         return None;
     }
     let o = t.glyf.0 + start;
-    let ncont = i16o(t.d, o);
+    let ncont = t.d.be_i16(o);
     if ncont <= 0 {
         return None;
     }
-    let scale = px_scale;
     let end_pts_off = o + 10;
-    let npts = u16o(t.d, end_pts_off + (ncont as usize - 1) * 2) as usize + 1;
+    let npts = t.d.be_u16(end_pts_off + (ncont as usize - 1) * 2) as usize + 1;
     let flags_off = end_pts_off + ncont as usize * 2
         + 2
-        + u16o(t.d, end_pts_off + ncont as usize * 2) as usize;
-    let mut flags: Vec<u8> = Vec::with_capacity(npts);
+        + t.d.be_u16(end_pts_off + ncont as usize * 2) as usize;
+    let mut flags: SmallVec<[u8; 64]> = SmallVec::new();
     let mut p = flags_off;
     while flags.len() < npts {
         let f = t.d[p];
@@ -347,7 +381,7 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
             }
         }
     }
-    let mut xs: Vec<i32> = Vec::with_capacity(npts);
+    let mut xs: SmallVec<[i32; 64]> = SmallVec::new();
     let mut x: i32 = 0;
     let mut p2 = p;
     for &f in flags.iter() {
@@ -356,13 +390,13 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
             p2 += 1;
             x = if f & 16 != 0 { x + dx } else { x - dx };
         } else if f & 16 == 0 {
-            let dx = i32::from(i16o(t.d, p2));
+            let dx = i32::from(t.d.be_i16(p2));
             p2 += 2;
             x += dx;
         }
         xs.push(x);
     }
-    let mut ys: Vec<i32> = Vec::with_capacity(npts);
+    let mut ys: SmallVec<[i32; 64]> = SmallVec::new();
     let mut y: i32 = 0;
     let mut p3 = p2;
     for &f in flags.iter() {
@@ -371,7 +405,7 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
             p3 += 1;
             y = if f & 32 != 0 { y + dy } else { y - dy };
         } else if f & 32 == 0 {
-            let dy = i32::from(i16o(t.d, p3));
+            let dy = i32::from(t.d.be_i16(p3));
             p3 += 2;
             y += dy;
         }
@@ -380,13 +414,12 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
     let mut out: SmallVec<[GlyphCmd; 40]> = SmallVec::new();
     let mut pt = 0usize;
     for c in 0..ncont as usize {
-        let end_pt = u16o(t.d, end_pts_off + c * 2) as usize;
-        let n = end_pt - pt + 1;
+        let end_pt = t.d.be_u16(end_pts_off + c * 2) as usize;
         let on_curve = |i: usize| flags[i] & 1 != 0;
         let first = pt;
         let last = end_pt;
         let mut i = first;
-        let mut start_on = on_curve(i);
+        let start_on = on_curve(i);
         let mut start_off_prev: Option<usize> = None;
         if !start_on {
             let prev = if i == first { last } else { i - 1 };
@@ -394,20 +427,13 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
                 start_off_prev = Some(prev);
                 let sx = (xs[first] + xs[prev]) / 2;
                 let sy = (ys[first] + ys[prev]) / 2;
-                out.push(GlyphCmd::MoveTo(sx as f32 * scale, sy as f32 * scale));
-                start_on = true;
+                out.push(GlyphCmd::MoveTo(sx as f32, sy as f32));
                 i = if i + 1 <= last { i + 1 } else { first };
             } else {
-                out.push(GlyphCmd::MoveTo(
-                    xs[prev] as f32 * scale,
-                    ys[prev] as f32 * scale,
-                ));
+                out.push(GlyphCmd::MoveTo(xs[prev] as f32, ys[prev] as f32));
             }
         } else {
-            out.push(GlyphCmd::MoveTo(
-                xs[i] as f32 * scale,
-                ys[i] as f32 * scale,
-            ));
+            out.push(GlyphCmd::MoveTo(xs[i] as f32, ys[i] as f32));
             i += 1;
         }
         if i > last && start_off_prev.is_none() {
@@ -417,32 +443,24 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
         }
         let mut prev_off: Option<(f32, f32)> = None;
         while i <= last {
+            let px = xs[i] as f32;
+            let py = ys[i] as f32;
             if on_curve(i) {
                 match prev_off.take() {
-                    Some((ox, oy)) => out.push(GlyphCmd::QuadTo(
-                        ox,
-                        oy,
-                        xs[i] as f32 * scale,
-                        ys[i] as f32 * scale,
-                    )),
-                    None => out.push(GlyphCmd::LineTo(
-                        xs[i] as f32 * scale,
-                        ys[i] as f32 * scale,
-                    )),
+                    Some((ox, oy)) => out.push(GlyphCmd::QuadTo(ox, oy, px, py)),
+                    None => out.push(GlyphCmd::LineTo(px, py)),
                 }
             } else if let Some((ox, oy)) = prev_off {
-                let mid_x = (ox + xs[i] as f32 * scale) / 2.0;
-                let mid_y = (oy + ys[i] as f32 * scale) / 2.0;
-                out.push(GlyphCmd::QuadTo(ox, oy, mid_x, mid_y));
-                prev_off = Some((xs[i] as f32 * scale, ys[i] as f32 * scale));
+                out.push(GlyphCmd::QuadTo(ox, oy, (ox + px) / 2.0, (oy + py) / 2.0));
+                prev_off = Some((px, py));
             } else {
-                prev_off = Some((xs[i] as f32 * scale, ys[i] as f32 * scale));
+                prev_off = Some((px, py));
             }
             i += 1;
         }
         if let Some((ox, oy)) = prev_off {
             let (ex, ey) = if start_off_prev.is_some() {
-                (xs[first] as f32 * scale, ys[first] as f32 * scale)
+                (xs[first] as f32, ys[first] as f32)
             } else {
                 match out.first() {
                     Some(GlyphCmd::MoveTo(mx, my)) => (*mx, *my),
@@ -453,9 +471,6 @@ pub fn glyph_contours(kind: FontKind, cp: u32, px: f64) -> Option<SmallVec<[Glyp
         }
         out.push(GlyphCmd::Close);
         pt = end_pt + 1;
-    }
-    if CONTOUR_CACHE.len() < 65536 && out.len() <= 40 {
-        let _ = CONTOUR_CACHE.insert_sync(cache_key, out.clone());
     }
     Some(out)
 }
@@ -496,7 +511,7 @@ pub fn measure(kind: FontKind, text: &str, px: f64) -> TextMetrics {
         }
         width += match t {
             Some(t) => advance_of_cp(t, cp, px),
-            None => px * 0.5,
+            None => tofu_advance(px),
         };
         origin_ink = width;
     }

@@ -721,15 +721,15 @@ pub(crate) fn bridge_fetch(
     body: Option<Bytes>,
     cookie: CompactString,
 ) -> Option<crate::task::FetchReply> {
-    let reply = fetch_bridge::dispatch(
+    let reply = fetch_bridge::dispatch(fetch_bridge::FetchCtx {
         url,
         method,
         headers,
         body,
         cookie,
-        crate::worker::net_slot(),
-        fetch_bridge::timeout_budget(),
-    );
+        net_slot: crate::worker::net_slot(),
+        timeout: fetch_bridge::timeout_budget(),
+    });
     if let Some(r) = reply.as_ref() {
         r.ingest_cookies();
     }

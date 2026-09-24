@@ -4,19 +4,8 @@ use core_utils::crypto::{
     sha256_into,
 };
 use crate::worker::{promise_reject, promise_resolve};
-use core_utils::rng::Rng;
-use core_utils::rng::seeds;
 use rquickjs::{Ctx, Function, IntoJs, Object, Value, object::Property};
 use smallvec::SmallVec;
-use std::cell::RefCell;
-
-thread_local! {
-    static CRYPTO_RNG: RefCell<Rng> = RefCell::new(Rng::new(core_utils::rng::GOLDEN));
-}
-
-pub(crate) fn reseed(seed: u64) {
-    CRYPTO_RNG.with(|r| *r.borrow_mut() = Rng::new(seed ^ seeds::SALT_CRYPTO_RESEED));
-}
 
 
 fn key_raw<'js>(key_obj: &Object<'js>) -> Option<&'js [u8]> {
@@ -26,8 +15,8 @@ fn key_raw<'js>(key_obj: &Object<'js>) -> Option<&'js [u8]> {
 }
 
 fn rand_fill(buf: &mut [u8]) {
-    CRYPTO_RNG.with(|rng| {
-        let mut r = rng.borrow_mut();
+    crate::worker::FAST_RNG.with(|cell| {
+        let mut r = cell.get();
         let mut i = 0;
         while i + 8 <= buf.len() {
             buf[i..i + 8].copy_from_slice(&r.next_u64().to_le_bytes());
@@ -38,6 +27,7 @@ fn rand_fill(buf: &mut [u8]) {
             let n = buf.len() - i;
             buf[i..].copy_from_slice(&tail[..n]);
         }
+        cell.set(r);
     });
 }
 

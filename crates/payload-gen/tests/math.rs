@@ -24,9 +24,7 @@ fn md5_known_vector() {
 #[test]
 fn canvas_hash_deterministic_and_profile_sensitive() {
     let hex = |seed: u64, v: &str, r: &str| -> String {
-        let mut buf = [0u8; 64];
-        core_utils::profile::canvas_hex_into(seed, v.as_bytes(), r.as_bytes(), &mut buf);
-        String::from_utf8(buf.to_vec()).unwrap()
+        core_utils::canvas_hex_of(seed, v, r).to_string()
     };
     let a = hex(7, "Google Inc.", "ANGLE (NVIDIA)");
     let b = hex(7, "Google Inc.", "ANGLE (NVIDIA)");

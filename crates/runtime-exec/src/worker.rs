@@ -470,11 +470,16 @@ fn store_prof(snap: &ProfileSnap) {
             href: snap.href.clone(),
             cookie: snap.cookie.clone(),
             seed: snap.seed(),
-            raster_seed: core_utils::profile::raster_seed(
-                profile.canvas_seed,
-                profile.webgl_vendor().as_bytes(),
-                profile.webgl_renderer().as_bytes(),
-            ),
+            raster_seed: {
+                let prof = profile;
+                let vendor = prof.webgl_vendor();
+                let renderer = prof.webgl_renderer();
+                let mut feed: SmallVec<[u8; 128]> = SmallVec::new();
+                feed.extend_from_slice(vendor.as_bytes());
+                feed.push(0xFF);
+                feed.extend_from_slice(renderer.as_bytes());
+                core_utils::xxh3::hash_seeded(snap.seed(), feed.as_slice())
+            },
             mem_limit: profile.device_memory().clamp(2, 8) as usize * 1024 * 1024,
             rtt_ms: snap.rtt_ms,
             mobile: profile.platform.is_mobile(),
@@ -1766,7 +1771,6 @@ impl JsEnv {
         snap: &ProfileSnap,
         input: Option<&Arc<[RawEvent]>>,
     ) -> (Result<Option<CompactString>, ExecError>, bool) {
-        crate::cryptoapi::reseed(snap.seed());
         store_prof(snap);
         clock::reset();
         timer::clear_all();

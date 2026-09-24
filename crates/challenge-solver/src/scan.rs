@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 
 use crate::{CORE_CURSOR, Align64, Lane, PaddedAtomicU64, PaddedAtomicUsize};
+use core_utils::BytesExt as _;
 use core_utils::pin_thread;
 
 use core_utils::crypto::{compress8, sha256_block, words_be32};
@@ -111,7 +112,7 @@ where
     while n < end {
         let h = digest(n);
         let hit = if head_only {
-            u32::from_be_bytes([h[0], h[1], h[2], h[3]]).leading_zeros() >= need_bits
+            h.be_u32(0).leading_zeros() >= need_bits
         } else {
             let s = core_utils::be32_words(&h);
             core_utils::lz_words_be(&s) >= need_bits
@@ -306,7 +307,6 @@ static SCAN_POOL: std::sync::LazyLock<ScanPool> = std::sync::LazyLock::new(|| {
                     f();
                 }
             })
-            .expect("scan pool spawn");
     }
     ScanPool { tx }
 });
@@ -423,6 +423,11 @@ where
     while done.0.load(Ordering::Acquire) < spawned {
         if abort.load(Ordering::Relaxed) {
             stop.store(true, Ordering::Release);
+            break;
+        }
+        if crate::watch_fired() {
+            stop.store(true, Ordering::Release);
+            abort.store(true, Ordering::Release);
             break;
         }
         std::hint::spin_loop();

@@ -23,7 +23,7 @@ fn anubis_scripts_captured() {
         parser_pipeline::Flow::Continue
     );
     let page = p.finish().unwrap();
-    let anubis = page.anubis.as_deref().expect("anubis json");
+    let anubis = page.anubis.as_ref().expect("anubis json");
     assert!(anubis.windows(10).any(|w| w == b"randomData"));
     assert!(
         anubis

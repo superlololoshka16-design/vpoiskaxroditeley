@@ -321,7 +321,7 @@ fn main() {
                     let mut out = stdout.lock();
                     for u in &url {
                         let _ = writeln!(&mut out, "== {u}");
-                        render_visit(&mut out, &flow::visit(&engine, u, &[], None).await);
+                        render_visit(&mut out, &flow::visit(&engine, flow::VisitReq { url: u, selectors: &[], proxy: None }).await);
                         let _ = out.flush();
                     }
                     render_footer(&mut out, &engine.stats);

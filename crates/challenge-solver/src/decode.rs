@@ -98,7 +98,7 @@ pub fn decode<'a>(envelope: &[u8], s: &'a mut Scratch) -> Result<(Meta, &'a [u8]
     if mid.len() < 2 {
         return Err(DecodeError::Length);
     }
-    let meta_len = u16::from_be_bytes([mid[0], mid[1]]) as usize;
+    let meta_len = mid.be_u16(0) as usize;
     if meta_len == 0 || meta_len > MAX_META || 2 + meta_len > mid.len() {
         return Err(DecodeError::Meta);
     }

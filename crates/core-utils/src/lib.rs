@@ -5,10 +5,9 @@ pub mod rng;
 pub mod sys;
 pub mod tz;
 pub mod url;
-pub mod profile;
 pub use crypto::{
     BLAKE2B_G_COLS, H0, K32, KdfError, PBKDF2_MAX_ITERATIONS, SUBTLE_MAX_OUT_BYTES,
-    adler32_feed, adler32_zeros, be32_words, blake2b, blake2b_long, compress8,
+    adler32_feed, adler32_zeros, be32_words, blake2b, blake2b_long, canvas_hex_of, compress8,
     cpu_avx2, cpu_avx512cd, cpu_sha, crc32_feed, digest_bytes, hmac_sha256_into, lz_batch16, lz_batch16_ref,
     lz_carry_chain, lz_words_be, md5_hex_into, pair_mut, pbkdf2_sha256_into, sha1_into, sha256,
     sha256_block, sha256_hex_into, sha256_into, sha256_midstate, sha256_seed_tail, sha_tail_pad,
@@ -19,7 +18,7 @@ pub use crypto::{sha256_block_ni, sha256_block_ni_2x};
 pub use encoding::{
     B64Error, B64_STANDARD, BytesExt, ascii_lower_byte, ascii_lower_compact, ascii_upper_byte,
     ascii_upper_compact, b64_decode_cap, b64_encoded_len, form_urlencoded_decode,
-    form_urlencoded_encode, hex_compact, hex_grouped, percent_decode, percent_decode_cow,
+    form_urlencoded_encode, hex_compact, hex_grouped, hex_val, percent_decode, percent_decode_cow,
     percent_encode_compact,
     percent_encode_into, push_ascii_case_into,
 };
@@ -37,7 +36,7 @@ pub use rng::{
     atomic_splitmix_step, ident, mix_ctx, mix_to_range, mulhi_bounded, splitmix_mix,
     u64_unit,
 };
-pub use sys::{env_flag, pin_thread, unix_ms, unix_ms_f64, unix_us};
+pub use sys::{env_flag, env_present, ms, pin_thread, unix_ms, unix_ms_f64, unix_us};
 pub use tz::{TzIdx, all_zone_names, country_of, tz_offset_for, tz_offset_zone, zone_of, zone_label_zone};
 pub use url::{
     Authority, HrefParts, StrExt, host_of, host_of_into, join_origin, origin_of, path_of,

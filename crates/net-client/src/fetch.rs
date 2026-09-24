@@ -154,13 +154,15 @@ pub fn guard_url(url: &str) -> Result<(), NetError> {
     if env_allows_private_network() {
         return Ok(());
     }
-    let sep = url.find("://").ok_or(NetError::Url)?;
-    let scheme = url[..sep].as_bytes();
-    if !scheme.eq_ci(b"http") && !scheme.eq_ci(b"https") {
+    let auth = core_utils::url::split_authority(url);
+    if auth.scheme.is_empty() {
+        return Err(NetError::Url);
+    }
+    if !core_utils::url::scheme_is_http(auth.scheme) {
         return Err(NetError::Blocked);
     }
 
-    let raw_host = core_utils::url::split_authority(url).host;
+    let raw_host = auth.host;
 
     let Some(host_norm) = normalize_host_whatwg(raw_host) else {
         return Err(NetError::Blocked);
