@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -197,7 +198,8 @@ pub async fn run_challenge(
     ctx.stats.add_script();
     let cookie = session
         .jar
-        .header_for_url(f.uri.as_str())
+        .header_for_url_into(f.uri.as_str(), &mut session.cookie_scratch)
+        .map(CompactString::new)
         .unwrap_or_default();
     let snap = ProfileSnap::from_parts(&session.profile, f.uri.as_str(), cookie.as_str())
         .with_rtt(f.elapsed_ms.min(u32::MAX as u64) as u32);
@@ -486,7 +488,9 @@ pub async fn visit(
             .map(|n| CompactString::from(nav_target(n, url.as_str())));
         let profile = session.profile.clone();
         let hop_url = url.clone();
-        let next_session = Session::new(profile, hop_url.as_str());
+        let mut next_session = Session::new(profile, hop_url.as_str());
+        next_session.jar = session.jar.clone();
+        next_session.hot.trust.store(session.trust(), Ordering::Release);
         hops.push(HopOutcome {
             url: hop_url,
             slot,

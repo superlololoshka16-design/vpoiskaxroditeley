@@ -74,7 +74,7 @@ impl WorkerPool {
             let events = events.clone();
             let cache = Arc::clone(&cache);
             std::thread::Builder::new()
-                .name(format!("silo-js-{i}"))
+                .name("silo-js".into())
                 .spawn(move || crate::worker::worker_main(i, rx, bundle, events, cache))
                 .map_err(|e| e.to_string())?;
         }

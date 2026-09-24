@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 
-use crate::{Align64, Lane, PaddedAtomicU64, PaddedAtomicUsize};
+use crate::{CORE_CURSOR, Align64, Lane, PaddedAtomicU64, PaddedAtomicUsize};
 use core_utils::pin_thread;
 
 use core_utils::crypto::{compress8, sha256_block, words_be32};
@@ -258,24 +259,28 @@ pub(crate) unsafe fn batch8<C: BatchCtx>(
     }
 }
 
-pub(crate) fn batched_solve<C: BatchCtx>(ctx: &C, threads: usize) -> Option<(u64, [u8; 32])> {
+pub(crate) fn batched_solve<C: BatchCtx + Send + Sync + 'static>(
+    ctx: C,
+    threads: usize,
+) -> Option<(u64, [u8; 32])> {
     batched_solve_until(ctx, threads, &AtomicBool::new(false))
 }
 
-pub(crate) fn batched_solve_until<C: BatchCtx>(
-    ctx: &C,
+pub(crate) fn batched_solve_until<C: BatchCtx + Send + Sync + 'static>(
+    ctx: C,
     threads: usize,
     abort: &AtomicBool,
 ) -> Option<(u64, [u8; 32])> {
+    let ctx = std::sync::Arc::new(ctx);
     width_solve_until(
         threads,
         MAX_WIDTH,
         16,
         8,
         CHUNK_CAP,
-        |width, base, end| {
+        move |width, base, end| {
             let plan = ctx.plan_of(width);
-            unsafe { batch8(ctx, &plan, base, end) }
+            unsafe { batch8(ctx.as_ref(), &plan, base, end) }
         },
         abort,
     )
@@ -294,7 +299,7 @@ static SCAN_POOL: std::sync::LazyLock<ScanPool> = std::sync::LazyLock::new(|| {
     for t in 0..n {
         let rx = rx.clone();
         thread::Builder::new()
-            .name(format!("silo-pow-{t}"))
+            .name("silo-pow".into())
             .spawn(move || {
                 pin_thread((core0 + t) % ncores);
                 for f in rx.iter() {
@@ -326,7 +331,7 @@ pub(crate) fn width_solve<Job>(
     job: Job,
 ) -> Option<(u64, [u8; 32])>
 where
-    Job: Fn(usize, u64, u64) -> Option<(u64, [u8; 32])> + Send + Sync,
+    Job: Fn(usize, u64, u64) -> Option<(u64, [u8; 32])> + Send + Sync + 'static,
 {
     width_solve_until(
         threads,
@@ -349,39 +354,42 @@ pub(crate) fn width_solve_until<Job>(
     abort: &AtomicBool,
 ) -> Option<(u64, [u8; 32])>
 where
-    Job: Fn(usize, u64, u64) -> Option<(u64, [u8; 32])> + Send + Sync,
+    Job: Fn(usize, u64, u64) -> Option<(u64, [u8; 32])> + Send + Sync + 'static,
 {
     let threads = threads.max(1);
     let pool = &*SCAN_POOL;
     let workers = (*NCPUS).min(threads);
-    let found = PaddedAtomicU64(AtomicU64::new(u64::MAX));
+    let found = Arc::new(PaddedAtomicU64(AtomicU64::new(u64::MAX)));
     let (jtx, jrx) = crossbeam_channel::bounded::<(usize, u64, u64)>(workers.max(1) * 4);
     let (rtx, rrx) = crossbeam_channel::unbounded::<(u64, [u8; 32])>();
-    let done = PaddedAtomicU64(AtomicU64::new(0));
-    let job = &job;
+    let done = Arc::new(PaddedAtomicU64(AtomicU64::new(0)));
+    let job = Arc::new(job);
+    let stop = Arc::new(AtomicBool::new(abort.load(Ordering::Acquire)));
     let mut spawned: u64 = 0;
     for _ in 0..workers {
         let jrx = jrx.clone();
         let rtx = rtx.clone();
-        let found = &found.0;
-        let done = &done.0;
+        let found = Arc::clone(&found);
+        let done = Arc::clone(&done);
+        let job = Arc::clone(&job);
+        let stop = Arc::clone(&stop);
         let task = move || {
             for (width, base, end) in jrx.iter() {
-                if abort.load(Ordering::Relaxed) {
+                if stop.load(Ordering::Relaxed) {
                     break;
                 }
-                let cur = found.load(Ordering::Acquire);
+                let cur = found.0.load(Ordering::Acquire);
                 if cur != u64::MAX && base > cur {
                     continue;
                 }
                 if let Some(r) = job(width, base, end)
-                    && r.0 < found.load(Ordering::Acquire)
+                    && r.0 < found.0.load(Ordering::Acquire)
                 {
-                    found.fetch_min(r.0, Ordering::AcqRel);
+                    found.0.fetch_min(r.0, Ordering::AcqRel);
                     let _ = rtx.send(r);
                 }
             }
-            done.fetch_add(1, Ordering::AcqRel);
+            done.0.fetch_add(1, Ordering::AcqRel);
         };
         if pool.tx.send(Box::new(task)).is_err() {
             break;
@@ -391,6 +399,7 @@ where
 
     'widths: for width in 1..=max_width {
         if abort.load(Ordering::Relaxed) {
+            stop.store(true, Ordering::Release);
             break 'widths;
         }
         let (base, limit) = width_range(width);
@@ -399,6 +408,7 @@ where
             if found.0.load(Ordering::Acquire) != u64::MAX
                 || abort.load(Ordering::Relaxed)
             {
+                stop.store(true, Ordering::Release);
                 break 'widths;
             }
             let b = base + j * chunk;
@@ -412,9 +422,10 @@ where
 
     while done.0.load(Ordering::Acquire) < spawned {
         if abort.load(Ordering::Relaxed) {
+            stop.store(true, Ordering::Release);
             break;
         }
-        std::thread::yield_now();
+        std::hint::spin_loop();
     }
     let mut best: Option<(u64, [u8; 32])> = None;
     for r in rrx.try_iter() {

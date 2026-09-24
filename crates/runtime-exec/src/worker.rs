@@ -368,7 +368,7 @@ fn collections_clear() {
 }
 
 pub(crate) fn cookie_out_clear() {
-    COOKIE_OUT.with(|c| *c.borrow_mut() = session_state::CookieJar::new());
+    COOKIE_OUT.with(|c| c.borrow_mut().clear());
 }
 
 pub(crate) fn cookie_set(line: &str) {
@@ -376,9 +376,10 @@ pub(crate) fn cookie_set(line: &str) {
 }
 
 fn cookie_out_take() -> Option<CompactString> {
-    let jar = COOKIE_OUT
-        .with(|c| std::mem::replace(&mut *c.borrow_mut(), session_state::CookieJar::new()));
-    jar.header_str()
+    COOKIE_OUT.with(|c| {
+        let jar = c.borrow_mut();
+        jar.header_str()
+    })
 }
 
 fn nav_set(url: CompactString) {
@@ -469,16 +470,11 @@ fn store_prof(snap: &ProfileSnap) {
             href: snap.href.clone(),
             cookie: snap.cookie.clone(),
             seed: snap.seed(),
-            raster_seed: {
-                let prof = profile;
-                let vendor = prof.webgl_vendor();
-                let renderer = prof.webgl_renderer();
-                let mut feed: SmallVec<[u8; 128]> = SmallVec::new();
-                feed.extend_from_slice(vendor.as_bytes());
-                feed.push(0xFF);
-                feed.extend_from_slice(renderer.as_bytes());
-                core_utils::xxh3::hash_seeded(snap.seed(), feed.as_slice())
-            },
+            raster_seed: core_utils::profile::raster_seed(
+                profile.canvas_seed,
+                profile.webgl_vendor().as_bytes(),
+                profile.webgl_renderer().as_bytes(),
+            ),
             mem_limit: profile.device_memory().clamp(2, 8) as usize * 1024 * 1024,
             rtt_ms: snap.rtt_ms,
             mobile: profile.platform.is_mobile(),
@@ -523,9 +519,10 @@ fn host_prototype<'js>(
 fn add_get_element_by_id<'js>(ctx: &Ctx<'js>, proto: &Object<'js>) -> rquickjs::Result<()> {
     let gebi = Function::new(
         ctx.clone(),
-        |c: Ctx<'js>, id: String| -> rquickjs::Result<Value<'js>> {
+        |c: Ctx<'js>, id: rquickjs::String<'js>| -> rquickjs::Result<Value<'js>> {
             touch::touch_log_record(ApiKey::GET_ELEMENT_BY_ID);
-            crate::webidl::opt_node_or_null(&c, crate::webidl::find_by_id_view(&id))
+            let cs = id.to_cstring()?;
+            crate::webidl::opt_node_or_null(&c, crate::webidl::find_by_id_view(cs.as_str()))
         },
     )?;
     crate::webidl::define_method(ctx, proto, "getElementById", gebi)
@@ -1982,6 +1979,7 @@ impl Worker {
                             let _ = self.events.try_send(Event::WasmFail);
                             let err = match e {
                                 crate::wasm::WasmError::Timeout => ExecError::WasmFuel,
+                                crate::wasm::WasmError::Fuel => ExecError::WasmFuel,
                                 crate::wasm::WasmError::Imports => ExecError::WasmImports,
                                 _ => ExecError::WasmCompile,
                             };
@@ -2071,19 +2069,12 @@ impl Worker {
         let (mut token, local_hit) = self
             .env
             .exec(domain, skel, &src, &args, &req.snap, req_input);
-        if matches!(token, Err(ExecError::Oom)) {
-            self.env.context.runtime().run_gc();
+        if matches!(token, Err(ExecError::Oom)) && self.gc_and_maybe_lift() {
             token = self
                 .env
                 .exec(domain, skel, &src, &args, &req.snap, req_input)
                 .0;
-            if matches!(token, Err(ExecError::Oom)) && self.gc_and_maybe_lift() {
-                token = self
-                    .env
-                    .exec(domain, skel, &src, &args, &req.snap, req_input)
-                    .0;
-                self.env.context.runtime().set_memory_limit(mem_limit());
-            }
+            self.env.context.runtime().set_memory_limit(mem_limit());
         }
         if control.stopped() && !matches!(&token, Err(ExecError::Oom)) {
             return ExecOutcome::failed(ExecError::Timeout);
@@ -2122,14 +2113,14 @@ fn anubis_solve(
     control: &ExecControl,
 ) -> Result<(CompactString, anubis_solver::SolvedAnubis), ExecError> {
     let ch = anubis_solver::AnubisChallenge::parse(&req.script)
-        .map_err(|e| ExecError::Js(CompactString::from(format!("anubis parse: {e:?}"))))?;
+        .map_err(|_| ExecError::Js(CompactString::const_new("anubis parse failed")))?;
     let threads = (*NCPUS).clamp(1, 8);
     let deadline = control
         .deadline
         .checked_sub(Duration::from_millis(250))
         .unwrap_or(control.deadline);
     let sol = anubis_solver::solve(&ch, threads, req.snap.prof.cpu_scale(), Some(deadline))
-        .map_err(|e| ExecError::Js(CompactString::from(format!("anubis solve: {e:?}"))))?;
+        .map_err(|_| ExecError::Js(CompactString::const_new("anubis solve failed")))?;
     let mut answer = String::with_capacity(192);
     anubis_solver::answer_json(&sol, &mut answer);
     Ok((CompactString::from(answer), sol))
@@ -2234,11 +2225,10 @@ pub(crate) fn worker_main(
             );
         });
         w.env.context.runtime().run_gc();
-        w.env.context.runtime().run_gc();
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum BundleError {
     #[error("polyfill unreadable: {0}")]
     Io(#[from] std::io::Error),

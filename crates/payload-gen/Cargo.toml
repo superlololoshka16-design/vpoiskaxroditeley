@@ -10,8 +10,9 @@ base64-turbo = { workspace = true }
 
 [dependencies]
 session-state = { workspace = true }
+tiny-skia = { workspace = true }
 core-utils = { workspace = true }
 smallvec = { workspace = true }
 compact_str = { workspace = true }
-tiny-skia = { workspace = true }
 bytemuck = { workspace = true }
+scc = { workspace = true }

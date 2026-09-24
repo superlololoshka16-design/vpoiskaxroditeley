@@ -169,6 +169,7 @@ typedef struct M3Runtime
 
     void *                  userdata;
 
+    i64                     fuel;
     M3Memory                memory;
     u32                     memoryLimit;
 

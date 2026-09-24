@@ -18,6 +18,8 @@ pub(crate) struct PaddedAtomicUsize(pub(crate) AtomicUsize);
 #[repr(align(64))]
 pub(crate) struct PaddedAtomicU64(pub(crate) std::sync::atomic::AtomicU64);
 
+static CORE_CURSOR: PaddedAtomicUsize = PaddedAtomicUsize(AtomicUsize::new(0));
+
 
 #[repr(C, align(64))]
 pub(crate) struct Align64<T>(pub(crate) T);

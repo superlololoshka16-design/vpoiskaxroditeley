@@ -278,7 +278,7 @@ async fn send_with_jar(
     url: &str,
     req: wreq::RequestBuilder,
 ) -> Result<wreq::Response, NetError> {
-    let req = apply_cookie(req, &session.jar, url);
+    let req = apply_cookie(req, session, url);
     let resp = send_with_retry(req).await?;
     ingest_set_cookies(&resp, session, url);
     Ok(resp)
@@ -538,12 +538,11 @@ pub fn set_cookie_lines(resp: &wreq::Response) -> SmallVec<[CompactString; 4]> {
 
 fn apply_cookie(
     req: wreq::RequestBuilder,
-    jar: &session_state::CookieJar,
+    session: &mut session_state::Session,
     url: &str,
 ) -> wreq::RequestBuilder {
-    let header = jar.header_for_url(url);
-    match header {
-        Some(s) => with_cookie(req, s.as_str()),
+    match session.jar.header_for_url_into(url, &mut session.cookie_scratch) {
+        Some(s) => with_cookie(req, s),
         None => req,
     }
 }

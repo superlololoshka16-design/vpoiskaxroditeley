@@ -21,6 +21,7 @@ unsafe extern "C" {
     fn m3_FreeEnvironment(env: *mut M3Environment);
     fn m3_NewRuntime(env: *mut M3Environment, stack: u32, userdata: *mut c_void) -> *mut M3Runtime;
     fn m3_FreeRuntime(rt: *mut M3Runtime);
+    fn m3_SetFuel(rt: *mut M3Runtime, fuel: i64);
     fn m3_ParseModule(
         env: *mut M3Environment,
         module: *mut *mut M3Module,
@@ -41,13 +42,13 @@ unsafe extern "C" {
     fn m3_GetRetCount(f: *mut M3Function) -> u32;
     fn m3_GetRetType(f: *mut M3Function, index: u32) -> u32;
 }
-
 #[derive(Debug)]
 pub enum WasmError {
     Malformed,
     Imports,
     NoEntry,
     BadEntry,
+    Fuel,
     Timeout,
     Trap(CompactString),
 }
@@ -59,6 +60,7 @@ impl std::fmt::Display for WasmError {
             WasmError::Imports => f.write_str("wasm: imports unsupported"),
             WasmError::NoEntry => f.write_str("wasm: no entry export"),
             WasmError::BadEntry => f.write_str("wasm: unsupported entry signature"),
+            WasmError::Fuel => f.write_str("wasm: fuel exhausted"),
             WasmError::Timeout => f.write_str("wasm: watchdog deadline"),
             WasmError::Trap(m) => write!(f, "wasm trap: {m}"),
         }
@@ -66,10 +68,10 @@ impl std::fmt::Display for WasmError {
 }
 
 impl std::error::Error for WasmError {}
-
 const STACK_BYTES: u32 = 512 * 1024;
 const ENTRY_NAMES: [&str; 4] = ["answer", "main", "run", "start"];
 const WASM_BUDGET_CAP: Duration = Duration::from_secs(8);
+const FUEL_CALLS: i64 = 20_000_000;
 
 #[inline]
 fn res_str(res: M3Result) -> Option<&'static str> {
@@ -176,6 +178,7 @@ fn run_inplace(bin: &[u8]) -> Result<CompactString, WasmError> {
         return Err(WasmError::Trap(CompactString::const_new("env alloc")));
     };
     unsafe {
+        m3_SetFuel(m3.rt, FUEL_CALLS);
         let mut module: *mut M3Module = std::ptr::null_mut();
         let res = m3_ParseModule(m3.env, &mut module, bin.as_ptr(), bin.len() as u32);
         if let Err(e) = m3_ok(res) {
@@ -295,11 +298,5 @@ pub fn run_wasm(bin: &bytes::Bytes, deadline: Instant) -> Result<CompactString, 
         sandbox_kill(idx);
         return Err(WasmError::Timeout);
     }
-    match rx.recv_timeout(budget) {
-        Ok(r) => r,
-        Err(_) => {
-            sandbox_kill(idx);
-            Err(WasmError::Timeout)
-        }
-    }
+    rx.recv_timeout(budget).map_err(|_| WasmError::Timeout)?
 }

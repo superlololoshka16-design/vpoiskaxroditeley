@@ -6,7 +6,7 @@ use core_utils::rng::mix_ctx;
 use core_utils::bump_u32_id;
 use payload_gen::{
     CANVAS_MAX_DIM, CANVAS_OP_FILL_RECT, CANVAS_OP_FILL_TEXT, CANVAS_OP_GET_IMAGE_DATA, CANVAS_OP_MEASURE,
-    CANVAS_OP_TO_URL, CanvasRaster, READBACK_MAX, canvas_time_cost_us, measure_width,
+    CANVAS_OP_TO_URL, CanvasRaster, READBACK_MAX,
     png_data_url_pixels, webgl_int_param, webgl_param,
 };
 use rquickjs::IntoJs as _;
@@ -18,7 +18,6 @@ use std::cell::RefCell;
 use std::hash::Hasher as _;
 use core_utils::xxh3::XxHash3_64;
 
-const BLANK_HASH: u64 = 0x0B1A_4B1A_4C0D_E511;
 
 #[derive(Clone)]
 pub(crate) struct Canvas2DState {
@@ -117,11 +116,7 @@ impl Canvas2DState {
     }
 
     fn draw_hash(&self, epoch: u32) -> u64 {
-        if !self.live(epoch) {
-            BLANK_HASH
-        } else {
-            self.hasher.finish().wrapping_add(self.ops as u64)
-        }
+        core_utils::profile::draw_hash(self.hasher.finish(), self.ops, !self.live(epoch))
     }
 }
 
@@ -142,12 +137,12 @@ fn gauss() -> f64 {
 }
 
 fn pay_cost(op: u8) {
-    let cost = canvas_time_cost_us(op, prof_cpu_scale(), gauss());
+    let cost = core_utils::profile::canvas_time_cost_us(op, prof_cpu_scale(), gauss());
     clock::add_offset_us(cost);
 }
 
 fn seed_for(canvas_id: u32) -> u64 {
-    mix_ctx(prof_raster_seed(), canvas_id as u64)
+    core_utils::profile::canvas_seed_of(canvas_id, prof_raster_seed())
 }
 
 #[derive(Trace, JsLifetime, Clone)]
@@ -213,6 +208,36 @@ fn set_style_slot(id: u32, slot: usize, val: &str) {
         let idx = grow(&mut rb, id, CanvasRow::fresh);
         rb[idx].strings[slot] = CompactString::new(val);
     });
+}
+
+#[inline]
+fn font_kind_of() -> payload_gen::font::FontKind {
+    if with_prof(|p| p.prof().platform.as_str() == "Windows") {
+        payload_gen::font::FontKind::Windows
+    } else {
+        payload_gen::font::FontKind::Linux
+    }
+}
+
+fn font_px_of(id: u32) -> f64 {
+    let s = style_slot(id, S_FONT, "10px sans-serif");
+    let b = s.as_bytes();
+    let mut px: f64 = 10.0;
+    let mut i = 0;
+    while i < b.len() && !b[i].is_ascii_digit() {
+        i += 1;
+    }
+    let start = i;
+    while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+        i += 1;
+    }
+    if i > start {
+        let n: f64 = s[start..i].parse().unwrap_or(10.0);
+        if n.is_finite() && (1.0..=500.0).contains(&n) {
+            px = n;
+        }
+    }
+    px
 }
 
 #[inline]
@@ -501,18 +526,24 @@ impl CanvasRenderingContext2D {
     pub fn fill_text<'js>(&mut self, text: rquickjs::String<'js>, x: f64, y: f64) {
         pay_cost(CANVAS_OP_FILL_TEXT);
         if let Ok(tc) = text.to_cstring() {
+            let px = font_px_of(self.id);
+            let kind = font_kind_of();
             let mut st = self.st.borrow_mut();
+            st.raster.set_font_kind(kind);
             st.text(25, tc.as_str(), x, y);
-            st.raster.fill_text(tc.as_str(), x, y);
+            st.raster.fill_text(tc.as_str(), x, y, px);
         }
     }
 
     #[qjs(rename = "strokeText")]
     pub fn stroke_text<'js>(&mut self, text: rquickjs::String<'js>, x: f64, y: f64) {
         if let Ok(tc) = text.to_cstring() {
+            let px = font_px_of(self.id);
+            let kind = font_kind_of();
             let mut st = self.st.borrow_mut();
+            st.raster.set_font_kind(kind);
             st.text(26, tc.as_str(), x, y);
-            st.raster.stroke_text(tc.as_str(), x, y);
+            st.raster.stroke_text(tc.as_str(), x, y, px);
         }
     }
 
@@ -523,16 +554,17 @@ impl CanvasRenderingContext2D {
         text: rquickjs::String<'js>,
     ) -> rquickjs::Result<Value<'js>> {
         let tc = text.to_cstring()?;
-        let seed = self.st.borrow().seed;
-        let w = measure_width(tc.as_str(), seed);
-        self.st.borrow_mut().op1(27, w);
+        let px = font_px_of(self.id);
+        let kind = font_kind_of();
+        let m = payload_gen::font::measure(kind, tc.as_str(), px);
+        self.st.borrow_mut().op1(27, m.width);
         pay_cost(CANVAS_OP_MEASURE);
         let o = Object::new(ctx.clone())?;
-        o.set("width", w)?;
-        o.set("actualBoundingBoxLeft", 0f64)?;
-        o.set("actualBoundingBoxRight", w)?;
-        o.set("actualBoundingBoxAscent", 2f64)?;
-        o.set("actualBoundingBoxDescent", 2f64)?;
+        o.set("width", m.width)?;
+        o.set("actualBoundingBoxLeft", m.actual_left)?;
+        o.set("actualBoundingBoxRight", m.actual_right)?;
+        o.set("actualBoundingBoxAscent", m.ascent)?;
+        o.set("actualBoundingBoxDescent", m.descent)?;
         Ok(o.into_value())
     }
 
@@ -1040,7 +1072,7 @@ pub(crate) struct WebGLRenderingContext {
 }
 
 fn build_gl<'js>(ctx: &Ctx<'js>, canvas_id: u32, es2: bool) -> rquickjs::Result<Object<'js>> {
-    let gl_seed = mix_ctx(seed_for(canvas_id), canvas_epoch(canvas_id) as u64);
+    let gl_seed = core_utils::profile::gl_seed_of(prof_raster_seed(), canvas_id, canvas_epoch(canvas_id));
     let class: Class<WebGLRenderingContext> = Class::instance(
         ctx.clone(),
         WebGLRenderingContext {
@@ -1231,7 +1263,7 @@ impl WebGLRenderingContext {
         let draw_hash = ctx_slot(&c, &CTX2D, self.canvas_id)
             .and_then(|o| Class::<CanvasRenderingContext2D>::from_object(&o))
             .map(|class| class.borrow().st.borrow().draw_hash(epoch))
-            .unwrap_or(BLANK_HASH);
+            .unwrap_or(core_utils::profile::BLANK_HASH);
         let seed = mix_ctx(seed_for(self.canvas_id), draw_hash);
         if let Some(bytes) = (unsafe {
             crate::webidl::ta_bytes_mut(&pixels).or_else(|| crate::webidl::ab_bytes_mut(&pixels))

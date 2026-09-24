@@ -25,4 +25,4 @@ pub use profile::{
     canvas_seed_of_ua, derived_from, mix_proxy_identity, reslot_for_asn,
 };
 pub use proxy::{ProxyConfig, ProxyParseError, ProxyScheme};
-pub use session::{CookieJar, Session};
+pub use session::{CookieJar, CookieScratch, Session};

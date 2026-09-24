@@ -118,7 +118,7 @@ impl BatchCtx for HmacCtx {
 }
 
 pub fn solve(key: &[u8], msg: &[u8], difficulty: u8, threads: usize) -> Option<(u64, [u8; 32])> {
-    crate::scan::batched_solve(&HmacCtx::new(key, msg, difficulty), threads)
+    crate::scan::batched_solve(HmacCtx::new(key, msg, difficulty), threads)
 }
 
 pub fn solve_until(
@@ -128,5 +128,5 @@ pub fn solve_until(
     threads: usize,
     abort: &std::sync::atomic::AtomicBool,
 ) -> Option<(u64, [u8; 32])> {
-    crate::scan::batched_solve_until(&HmacCtx::new(key, msg, difficulty), threads, abort)
+    crate::scan::batched_solve_until(HmacCtx::new(key, msg, difficulty), threads, abort)
 }

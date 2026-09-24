@@ -136,8 +136,9 @@ thread_local! {
     static TIMERQ: RefCell<TimerState> = RefCell::new(TimerState { next_id: 1, seq: 0, live: 0, heap: BinaryHeap::new(), tails: fx_map() });
     static RAFQ: RefCell<RafState> = const { RefCell::new(RafState { frame_us: 0, cadence: 0, seed: 0, cbs: Vec::new(), next_id: 1, display_hz: 60 }) };
     static APPLY: RefCell<Option<Persistent<Function<'static>>>> = const { RefCell::new(None) };
-    static MICRO: RefCell<Option<Persistent<Function<'static>>>> = const { RefCell::new(None) };
+    static RAF_SCRATCH: RefCell<Vec<(u32, Persistent<Value<'static>>)>> = const { RefCell::new(Vec::new()) };
     static EMPTY_ARGS: RefCell<Option<Persistent<rquickjs::Array<'static>>>> = const { RefCell::new(None) };
+    static MICRO: RefCell<Option<Persistent<Function<'static>>>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn init(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
@@ -364,14 +365,15 @@ fn fire_raf_batch(ctx: &Ctx<'_>) -> bool {
     }
     let ts = clock::now_ms_quantized();
     let mut next_frame_us: u64 = 0;
-    let batch: Vec<(u32, Persistent<Value<'static>>)> = RAFQ.with(|r| {
+    let mut batch: Vec<(u32, Persistent<Value<'static>>)> =
+        RAF_SCRATCH.with(|s| core::mem::take(&mut *s.borrow_mut()));
+    RAFQ.with(|r| {
         let mut r = r.borrow_mut();
         next_frame_us = raf_frame_interval_us(r.cadence, r.seed, r.display_hz);
         r.cadence = r.cadence.wrapping_add(1);
-        std::mem::take(&mut r.cbs)
+        core::mem::swap(&mut r.cbs, &mut batch);
     });
-    let mut keep: Vec<(u32, Persistent<Value<'static>>)> = Vec::new();
-    for (i, p) in batch {
+    for (i, p) in batch.drain(..) {
         let Ok(cb) = p.clone().restore(ctx) else {
             continue;
         };
@@ -380,18 +382,13 @@ fn fire_raf_batch(ctx: &Ctx<'_>) -> bool {
         {
             let _: rquickjs::Result<Value<'_>> = f.call((ts,));
         } else {
-            keep.push((i, p));
+            RAFQ.with(|r| r.borrow_mut().cbs.push((i, p)));
         }
     }
     RAFQ.with(|r| {
-        let mut r = r.borrow_mut();
-        if r.cbs.is_empty() {
-            r.cbs = keep;
-        } else {
-            r.cbs.extend(keep);
-        }
-        r.frame_us = clock::now_us().saturating_add(next_frame_us);
+        r.borrow_mut().frame_us = clock::now_us().saturating_add(next_frame_us);
     });
+    RAF_SCRATCH.with(|s| *s.borrow_mut() = batch);
     true
 }
 

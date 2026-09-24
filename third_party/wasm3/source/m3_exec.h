@@ -532,8 +532,10 @@ d_m3Op  (Call)
     i32 stackOffset             = immediate (i32);
     IM3Memory memory            = m3MemInfo (_mem);
 
+    if (UNLIKELY(m3MemRuntime (_mem)->fuel <= 0))
+        newTrap (m3Err_trapFuelExhausted);
+    m3MemRuntime (_mem)->fuel--;
     m3stack_t sp = _sp + stackOffset;
-
     m3ret_t r = Call (callPC, sp, _mem, d_m3OpDefaultArgs);
     _mem = memory->mallocated;
 
@@ -841,10 +843,15 @@ d_m3Op  (Loop)
 
     m3ret_t r;
 
+    IM3Runtime rt = m3MemRuntime (_mem);
     IM3Memory memory = m3MemInfo (_mem);
 
     do
     {
+        if (UNLIKELY(rt->fuel <= 0))
+            newTrap (m3Err_trapFuelExhausted);
+        rt->fuel--;
+
 #if d_m3EnableStrace >= 3
         d_m3TracePrint("iter {");
         trace_rt->callDepth++;

@@ -1,6 +1,6 @@
 use core_utils::rng::Rng;
 use core_utils::xxh3;
-use core_utils::{canvas_hex_of, md5_hex_into, sha1_into, sha256_hex_into};
+use core_utils::{md5_hex_into, sha1_into, sha256_hex_into};
 use payload_gen::webgl_param;
 use session_state::{NetKind, asn_info};
 
@@ -23,10 +23,15 @@ fn md5_known_vector() {
 
 #[test]
 fn canvas_hash_deterministic_and_profile_sensitive() {
-    let a = canvas_hex_of(7, "Google Inc.", "ANGLE (NVIDIA)");
-    let b = canvas_hex_of(7, "Google Inc.", "ANGLE (NVIDIA)");
-    let c = canvas_hex_of(8, "Google Inc.", "ANGLE (NVIDIA)");
-    let d = canvas_hex_of(7, "Google Inc.", "ANGLE (Intel)");
+    let hex = |seed: u64, v: &str, r: &str| -> String {
+        let mut buf = [0u8; 64];
+        core_utils::profile::canvas_hex_into(seed, v.as_bytes(), r.as_bytes(), &mut buf);
+        String::from_utf8(buf.to_vec()).unwrap()
+    };
+    let a = hex(7, "Google Inc.", "ANGLE (NVIDIA)");
+    let b = hex(7, "Google Inc.", "ANGLE (NVIDIA)");
+    let c = hex(8, "Google Inc.", "ANGLE (NVIDIA)");
+    let d = hex(7, "Google Inc.", "ANGLE (Intel)");
     assert_eq!(a, b);
     assert_ne!(a, c);
     assert_ne!(a, d);

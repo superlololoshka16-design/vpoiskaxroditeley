@@ -67,16 +67,15 @@ fn subtle_digest<'js>(
         None
     };
     let bytes: &[u8] = borrowed.unwrap_or_else(|| owned.as_deref().unwrap_or_default());
-    let buf: Vec<u8> = if algo.eq_ignore_ascii_case("SHA-1") || algo.eq_ignore_ascii_case("SHA1") {
+    let ab = if algo.eq_ignore_ascii_case("SHA-1") || algo.eq_ignore_ascii_case("SHA1") {
         let mut d = [0u8; 20];
         sha1_into(bytes, &mut d);
-        d.to_vec()
+        rquickjs::ArrayBuffer::new_copy(c.clone(), &d)?
     } else {
         let mut d = [0u8; 32];
         sha256_into(bytes, &mut d);
-        d.to_vec()
+        rquickjs::ArrayBuffer::new_copy(c.clone(), &d)?
     };
-    let ab = rquickjs::ArrayBuffer::new(c.clone(), buf)?;
     promise_resolve(&c, ab.into_value())
 }
 
@@ -110,7 +109,7 @@ fn subtle_sign<'js>(
     let bytes: &[u8] = borrowed.unwrap_or_else(|| owned.as_deref().unwrap_or_default());
     let mut mac = [0u8; 32];
     hmac_sha256_into(kb, bytes, &mut mac);
-    let ab = rquickjs::ArrayBuffer::new(c.clone(), mac.to_vec())?;
+    let ab = rquickjs::ArrayBuffer::new_copy(c.clone(), &mac)?;
     promise_resolve(&c, ab.into_value())
 }
 
@@ -135,7 +134,7 @@ fn subtle_import_key<'js>(
     ck.set("type", "secret")?;
     ck.set("extractable", true)?;
     ck.set("algorithm", algo)?;
-    let raw_ab = rquickjs::ArrayBuffer::new(c.clone(), bytes.to_vec())?;
+    let raw_ab = rquickjs::ArrayBuffer::new_copy(c.clone(), bytes)?;
     ck.prop("_raw", Property::from(raw_ab).writable().configurable())?;
     promise_resolve(&c, ck.into_value())
 }
@@ -185,7 +184,7 @@ fn subtle_derive_bits<'js>(
     if ok.is_err() {
         return promise_reject(&c, "OperationError: deriveBits failed");
     }
-    let ab = rquickjs::ArrayBuffer::new(c.clone(), out.into_vec())?;
+    let ab = rquickjs::ArrayBuffer::new_copy(c.clone(), out.as_slice())?;
     promise_resolve(&c, ab.into_value())
 }
 

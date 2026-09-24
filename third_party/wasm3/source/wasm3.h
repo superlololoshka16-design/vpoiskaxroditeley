@@ -176,6 +176,7 @@ d_m3ErrorConst  (trapTableElementIsNull,        "[trap] null table element")
 d_m3ErrorConst  (trapExit,                      "[trap] program called exit")
 d_m3ErrorConst  (trapAbort,                     "[trap] program called abort")
 d_m3ErrorConst  (trapUnreachable,               "[trap] unreachable executed")
+d_m3ErrorConst  (trapFuelExhausted,            "[trap] fuel exhausted")
 d_m3ErrorConst  (trapStackOverflow,             "[trap] stack overflow")
 
 
@@ -207,8 +208,9 @@ d_m3ErrorConst  (trapStackOverflow,             "[trap] stack overflow")
 
     // This is used internally by Raw Function helpers
     uint32_t            m3_GetMemorySize            (IM3Runtime             i_runtime);
-
     void *              m3_GetUserData              (IM3Runtime             i_runtime);
+    void                m3_SetFuel                  (IM3Runtime             i_runtime,
+                                                     int64_t                i_fuel);
 
 
 //-------------------------------------------------------------------------------------------------------------------------------

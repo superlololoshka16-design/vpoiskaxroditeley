@@ -177,6 +177,7 @@ IM3Runtime  m3_NewRuntime  (IM3Environment i_environment, u32 i_stackSizeInBytes
 
         runtime->environment = i_environment;
         runtime->userdata = i_userdata;
+        runtime->fuel = 0;
 
         runtime->stack = m3_Malloc (i_stackSizeInBytes + 4*sizeof (m3slot_t)); // TODO: more precise stack checks
 
@@ -189,10 +190,15 @@ IM3Runtime  m3_NewRuntime  (IM3Environment i_environment, u32 i_stackSizeInBytes
 
     return runtime;
 }
-
 void *  m3_GetUserData  (IM3Runtime i_runtime)
 {
     return i_runtime ? i_runtime->userdata : NULL;
+}
+
+void  m3_SetFuel  (IM3Runtime i_runtime, int64_t i_fuel)
+{
+    if (i_runtime)
+        i_runtime->fuel = i_fuel;
 }
 
 

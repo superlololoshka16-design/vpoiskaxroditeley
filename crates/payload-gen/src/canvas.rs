@@ -5,6 +5,7 @@ use core_utils::BytesExt as _;
 use core_utils::rng::{GOLDEN, U64Ext as _};
 use core_utils::b64_encoded_len;
 use core_utils::{adler32_feed, crc32_feed};
+use crate::font::FontKind;
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Stroke, Transform};
 
 
@@ -16,13 +17,7 @@ pub const CANVAS_OP_MEASURE: u8 = 4;
 
 pub const CANVAS_MAX_DIM: u32 = 32767;
 
-#[inline]
-pub fn measure_width(text: &str, seed: u64) -> f64 {
-    text.chars()
-        .map(|ch| glyph_advance(ch as u32, seed))
-        .sum::<f64>()
-        + 0.5
-}
+
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Rgba8 {
@@ -177,142 +172,6 @@ pub fn parse_color(s: &str) -> Rgba8 {
     parse_fn_color(low).unwrap_or_else(|| named_color(low))
 }
 
-const FONT5X7: [[u8; 5]; 95] = [
-    [0x00, 0x00, 0x00, 0x00, 0x00],
-    [0x00, 0x00, 0x5F, 0x00, 0x00],
-    [0x00, 0x07, 0x00, 0x07, 0x00],
-    [0x14, 0x7F, 0x14, 0x7F, 0x14],
-    [0x24, 0x2A, 0x7F, 0x2A, 0x12],
-    [0x23, 0x13, 0x08, 0x64, 0x62],
-    [0x36, 0x49, 0x55, 0x22, 0x50],
-    [0x00, 0x05, 0x03, 0x00, 0x00],
-    [0x00, 0x1C, 0x22, 0x41, 0x00],
-    [0x00, 0x41, 0x22, 0x1C, 0x00],
-    [0x14, 0x08, 0x3E, 0x08, 0x14],
-    [0x08, 0x08, 0x3E, 0x08, 0x08],
-    [0x00, 0x50, 0x30, 0x00, 0x00],
-    [0x08, 0x08, 0x08, 0x08, 0x08],
-    [0x00, 0x60, 0x60, 0x00, 0x00],
-    [0x20, 0x10, 0x08, 0x04, 0x02],
-    [0x3E, 0x51, 0x49, 0x45, 0x3E],
-    [0x00, 0x42, 0x7F, 0x40, 0x00],
-    [0x42, 0x61, 0x51, 0x49, 0x46],
-    [0x21, 0x41, 0x45, 0x4B, 0x31],
-    [0x18, 0x14, 0x12, 0x7F, 0x10],
-    [0x27, 0x45, 0x45, 0x45, 0x39],
-    [0x3C, 0x4A, 0x49, 0x49, 0x30],
-    [0x01, 0x71, 0x09, 0x05, 0x03],
-    [0x36, 0x49, 0x49, 0x49, 0x36],
-    [0x06, 0x49, 0x49, 0x29, 0x1E],
-    [0x00, 0x36, 0x36, 0x00, 0x00],
-    [0x00, 0x56, 0x36, 0x00, 0x00],
-    [0x08, 0x14, 0x22, 0x41, 0x00],
-    [0x14, 0x14, 0x14, 0x14, 0x14],
-    [0x00, 0x41, 0x22, 0x14, 0x08],
-    [0x02, 0x01, 0x51, 0x09, 0x06],
-    [0x32, 0x49, 0x79, 0x41, 0x3E],
-    [0x7E, 0x11, 0x11, 0x11, 0x7E],
-    [0x7F, 0x49, 0x49, 0x49, 0x36],
-    [0x3E, 0x41, 0x41, 0x41, 0x22],
-    [0x7F, 0x41, 0x41, 0x22, 0x1C],
-    [0x7F, 0x49, 0x49, 0x49, 0x41],
-    [0x7F, 0x09, 0x09, 0x09, 0x01],
-    [0x3E, 0x41, 0x49, 0x49, 0x7A],
-    [0x7F, 0x08, 0x08, 0x08, 0x7F],
-    [0x00, 0x41, 0x7F, 0x41, 0x00],
-    [0x20, 0x40, 0x41, 0x3F, 0x01],
-    [0x7F, 0x08, 0x14, 0x22, 0x41],
-    [0x7F, 0x40, 0x40, 0x40, 0x40],
-    [0x7F, 0x02, 0x0C, 0x02, 0x7F],
-    [0x7F, 0x04, 0x08, 0x10, 0x7F],
-    [0x3E, 0x41, 0x41, 0x41, 0x3E],
-    [0x7F, 0x09, 0x09, 0x09, 0x06],
-    [0x3E, 0x41, 0x51, 0x21, 0x5E],
-    [0x7F, 0x09, 0x19, 0x29, 0x46],
-    [0x46, 0x49, 0x49, 0x49, 0x31],
-    [0x01, 0x01, 0x7F, 0x01, 0x01],
-    [0x3F, 0x40, 0x40, 0x40, 0x3F],
-    [0x1F, 0x20, 0x40, 0x20, 0x1F],
-    [0x3F, 0x40, 0x38, 0x40, 0x3F],
-    [0x63, 0x14, 0x08, 0x14, 0x63],
-    [0x07, 0x08, 0x70, 0x08, 0x07],
-    [0x61, 0x51, 0x49, 0x45, 0x43],
-    [0x00, 0x7F, 0x41, 0x41, 0x00],
-    [0x02, 0x04, 0x08, 0x10, 0x20],
-    [0x00, 0x41, 0x41, 0x7F, 0x00],
-    [0x04, 0x02, 0x01, 0x02, 0x04],
-    [0x40, 0x40, 0x40, 0x40, 0x40],
-    [0x00, 0x01, 0x02, 0x04, 0x00],
-    [0x20, 0x54, 0x54, 0x54, 0x78],
-    [0x7F, 0x48, 0x44, 0x44, 0x38],
-    [0x38, 0x44, 0x44, 0x44, 0x20],
-    [0x38, 0x44, 0x44, 0x48, 0x7F],
-    [0x38, 0x54, 0x54, 0x54, 0x18],
-    [0x08, 0x7E, 0x09, 0x01, 0x02],
-    [0x0C, 0x52, 0x52, 0x52, 0x3E],
-    [0x7F, 0x08, 0x04, 0x04, 0x78],
-    [0x00, 0x44, 0x7D, 0x40, 0x00],
-    [0x20, 0x40, 0x44, 0x3D, 0x00],
-    [0x7F, 0x10, 0x28, 0x44, 0x00],
-    [0x00, 0x41, 0x7F, 0x40, 0x00],
-    [0x7C, 0x04, 0x18, 0x04, 0x78],
-    [0x7C, 0x08, 0x04, 0x04, 0x78],
-    [0x38, 0x44, 0x44, 0x44, 0x38],
-    [0x7C, 0x14, 0x14, 0x14, 0x08],
-    [0x08, 0x14, 0x14, 0x18, 0x7C],
-    [0x7C, 0x08, 0x04, 0x04, 0x08],
-    [0x48, 0x54, 0x54, 0x54, 0x20],
-    [0x04, 0x3F, 0x44, 0x40, 0x20],
-    [0x3C, 0x40, 0x40, 0x20, 0x7C],
-    [0x1C, 0x20, 0x40, 0x20, 0x1C],
-    [0x3C, 0x40, 0x30, 0x40, 0x3C],
-    [0x44, 0x28, 0x10, 0x28, 0x44],
-    [0x0C, 0x50, 0x50, 0x50, 0x3C],
-    [0x44, 0x64, 0x54, 0x4C, 0x44],
-    [0x00, 0x08, 0x36, 0x41, 0x00],
-    [0x00, 0x00, 0x7F, 0x00, 0x00],
-    [0x00, 0x41, 0x36, 0x08, 0x00],
-    [0x08, 0x08, 0x2A, 0x1C, 0x08],
-];
-
-fn glyph_bits(cp: u32) -> [u8; 5] {
-    if (0x20..=0x7E).contains(&cp) {
-        return FONT5X7[(cp - 0x20) as usize];
-    }
-    if cp < 0x20 {
-        return [0, 0, 0, 0, 0];
-    }
-    let z = (u64::from(cp).wrapping_mul(GOLDEN) ^ core_utils::rng::seeds::SALT_GLYPH).mix();
-    [
-        (z & 0x7F) as u8,
-        ((z >> 7) & 0x7F) as u8,
-        ((z >> 14) & 0x7F) as u8,
-        ((z >> 21) & 0x7F) as u8,
-        ((z >> 28) & 0x7F) as u8,
-    ]
-}
-
-const SALT_GLYPH_SCALE: u64 = core_utils::rng::seeds::SALT_GLYPH_SCALE;
-
-#[inline]
-fn glyph_ink_right(cp: u32) -> usize {
-    let g = glyph_bits(cp);
-    let mut right = 0usize;
-    for (c, col) in g.iter().enumerate() {
-        if *col != 0 {
-            right = c + 1;
-        }
-    }
-    right
-}
-
-#[inline]
-pub fn glyph_advance(cp: u32, seed: u64) -> f64 {
-    let width = glyph_ink_right(cp).max(1usize) as f64;
-    let bearing = 1.0 + core_utils::Identity::new(seed).at(cp as u64).f64_unit() * 0.6;
-    let scale = 0.9 + core_utils::Identity::new(seed).at(SALT_GLYPH_SCALE).f64_unit() * 0.25;
-    (width + bearing) * scale
-}
 
 #[derive(Clone)]
 enum PathSeg {
@@ -342,6 +201,7 @@ enum Cmd {
         text: CompactString,
         x: f64,
         y: f64,
+        px: f64,
         draw: Draw,
     },
     Path {
@@ -404,24 +264,37 @@ fn build_path(segs: &[PathSeg]) -> Option<Path> {
     pb.finish()
 }
 
-fn push_text(pb: &mut PathBuilder, text: &str, x: f64, y: f64, seed: u64) {
+
+
+
+fn push_text(pb: &mut PathBuilder, kind: FontKind, text: &str, x: f64, y: f64, px: f64) {
     let mut cx = x;
     for ch in text.chars() {
-        let glyph = glyph_bits(ch as u32);
-        for (col, bits) in glyph.iter().enumerate() {
-            for row in 0..7u32 {
-                if bits & (1 << row) != 0 {
-                    let gx = cx + f64::from(col as u32);
-                    let gy = y - 7.0 + f64::from(row);
-                    pb.move_to(gx as f32, gy as f32);
-                    pb.line_to((gx + 1.0) as f32, gy as f32);
-                    pb.line_to((gx + 1.0) as f32, (gy + 1.0) as f32);
-                    pb.line_to(gx as f32, (gy + 1.0) as f32);
-                    pb.close();
+        let cp = ch as u32;
+        if let Some(cmds) = crate::font::glyph_contours(kind, cp, px) {
+            for cmd in cmds {
+                match cmd {
+                    crate::font::GlyphCmd::MoveTo(gx, gy) => {
+                        pb.move_to((cx + f64::from(gx)) as f32, (y - f64::from(gy)) as f32);
+                    }
+                    crate::font::GlyphCmd::LineTo(gx, gy) => {
+                        pb.line_to((cx + f64::from(gx)) as f32, (y - f64::from(gy)) as f32);
+                    }
+                    crate::font::GlyphCmd::QuadTo(qx, qy, ex, ey) => {
+                        pb.quad_to(
+                            (cx + f64::from(qx)) as f32,
+                            (y - f64::from(qy)) as f32,
+                            (cx + f64::from(ex)) as f32,
+                            (y - f64::from(ey)) as f32,
+                        );
+                    }
+                    crate::font::GlyphCmd::Close => {
+                        pb.close();
+                    }
                 }
             }
         }
-        cx += glyph_advance(ch as u32, seed);
+        cx += crate::font::advance_of_cp_pub(kind, cp, px);
     }
 }
 
@@ -471,13 +344,13 @@ fn clear_region(pm: &mut PixmapMut<'_>, x: f64, y: f64, w: f64, h: f64) {
 }
 
 impl Cmd {
-    fn apply(&self, segs: &[PathSeg], pm: &mut PixmapMut<'_>, seed: u64, ts: Transform) {
+    fn apply(&self, segs: &[PathSeg], pm: &mut PixmapMut<'_>, _seed: u64, ts: Transform) {
         let (path, draw) = match self {
             Cmd::Clear { x, y, w, h } => return clear_region(pm, *x, *y, *w, *h),
             Cmd::Rect { x, y, w, h, draw } => (rect_path(*x, *y, *w, *h), *draw),
-            Cmd::Text { text, x, y, draw } => {
+            Cmd::Text { text, x, y, px, draw } => {
                 let mut pb = PathBuilder::new();
-                push_text(&mut pb, text, *x, *y, seed);
+                push_text(&mut pb, self.kind, text, *x, *y, *px);
                 (pb.finish(), *draw)
             }
             Cmd::Path {
@@ -546,6 +419,7 @@ fn unpremul_px(px: &mut [u8]) {
 #[derive(Clone)]
 pub struct CanvasRaster {
     seed: u64,
+    kind: FontKind,
     fill: Rgba8,
     stroke: Rgba8,
     line_width: f64,
@@ -561,6 +435,7 @@ impl CanvasRaster {
     pub fn new(seed: u64) -> Self {
         Self {
             seed,
+            kind: FontKind::Linux,
             fill: BLACK,
             stroke: BLACK,
             line_width: 1.0,
@@ -571,6 +446,10 @@ impl CanvasRaster {
             pen: None,
             start: None,
         }
+    }
+
+    pub fn set_font_kind(&mut self, kind: FontKind) {
+        self.kind = kind;
     }
 
     pub fn resize(&mut self) {
@@ -633,25 +512,27 @@ impl CanvasRaster {
         }
     }
 
-    pub fn fill_text(&mut self, text: &str, x: f64, y: f64) {
-        self.push_text_cmd(text, x, y, Draw::Fill(self.tinted(self.fill)));
+    pub fn fill_text(&mut self, text: &str, x: f64, y: f64, px: f64) {
+        self.push_text_cmd(text, x, y, px, Draw::Fill(self.tinted(self.fill)));
     }
 
-    pub fn stroke_text(&mut self, text: &str, x: f64, y: f64) {
+    pub fn stroke_text(&mut self, text: &str, x: f64, y: f64, px: f64) {
         self.push_text_cmd(
             text,
             x,
             y,
+            px,
             Draw::Stroke(self.tinted(self.stroke), self.line_width),
         );
     }
 
-    fn push_text_cmd(&mut self, text: &str, x: f64, y: f64, draw: Draw) {
+    fn push_text_cmd(&mut self, text: &str, x: f64, y: f64, px: f64, draw: Draw) {
         if fin([x, y]) {
             self.cmds.push(Cmd::Text {
                 text: CompactString::new(text),
                 x,
                 y,
+                px,
                 draw,
             });
         }
@@ -943,16 +824,8 @@ pub fn png_data_url_pixels(w: u32, h: u32, pixels: &[u8]) -> String {
 }
 
 
-const CANVAS_COST_MS: [f64; 5] = [0.0016, 0.0042, 0.028, 0.055, 0.0009];
-
 pub use core_utils::bench::bench_jitter;
-
-pub fn canvas_time_cost_us(op: u8, cpu_scale: f64, gauss: f64) -> u64 {
-    let i = usize::from(op) % CANVAS_COST_MS.len();
-    let ms = (CANVAS_COST_MS[i] * core_utils::bench::bench_scale(cpu_scale, bench_jitter(gauss)))
-        .max(0.0001);
-    (ms * 1000.0).max(1.0) as u64
-}
+pub use core_utils::profile::canvas_time_cost_us;
 
 const AUDIO_ROOT: u64 = core_utils::rng::seeds::SALT_AUDIO_ROOT;
 const S_AUDIO_CHANNEL: u64 = core_utils::rng::seeds::SALT_AUDIO_CHANNEL;

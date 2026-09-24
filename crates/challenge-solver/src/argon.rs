@@ -445,7 +445,7 @@ pub fn solve_until(
     abort: &std::sync::atomic::AtomicBool,
 ) -> Option<(u64, [u8; 32])> {
     let ctx = ArgonCtx::new(salt, difficulty, m_cost, t_cost);
-    let ctx = &ctx;
+    let ctx = std::sync::Arc::new(ctx);
     let m_prime = ctx.m_prime as usize;
     let need_bits = ctx.need_bits;
     crate::scan::width_solve_until(threads, 12, 8, 1, ARGON_CHUNK_CAP, move |width, b, end| {

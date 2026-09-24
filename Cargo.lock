@@ -2505,6 +2505,7 @@ dependencies = [
  "compact_str",
  "core-utils",
  "hex",
+ "scc",
  "session-state",
  "smallvec",
  "tiny-skia",

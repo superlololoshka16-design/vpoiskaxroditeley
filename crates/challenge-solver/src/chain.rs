@@ -80,7 +80,7 @@ impl BatchCtx for ChainCtx {
 }
 
 pub fn solve(salt: &[u8], rounds: u32, difficulty: u8, threads: usize) -> Option<(u64, [u8; 32])> {
-    crate::scan::batched_solve(&ChainCtx::new(salt, rounds, difficulty), threads)
+    crate::scan::batched_solve(ChainCtx::new(salt, rounds, difficulty), threads)
 }
 
 pub fn solve_until(
@@ -91,7 +91,7 @@ pub fn solve_until(
     abort: &std::sync::atomic::AtomicBool,
 ) -> Option<(u64, [u8; 32])> {
     crate::scan::batched_solve_until(
-        &ChainCtx::new(salt, rounds, difficulty),
+        ChainCtx::new(salt, rounds, difficulty),
         threads,
         abort,
     )

@@ -48,7 +48,7 @@ memchr = "2.8.3"
 base64-turbo = "0.4"
 
 compact_str = { version = "0.10.0", features = ["serde"] }
-smallvec = { version = "1.16.0", features = ["write"] }
+smallvec = { version = "1.16.0", features = ["write", "const_generics"] }
 bytemuck = { version = "1.24", features = ["derive"] }
 indexmap = "2.14.1"
 twox-hash = "2.1.4"

@@ -46,15 +46,16 @@ struct FleetSlot {
     route_bundle: Arc<RouteBundle>,
     batcher: TelemetryBatcher,
     scratch: bytes::BytesMut,
+    cookie_scratch: session_state::CookieScratch,
     events_total: u64,
     batches: u32,
 }
 
 pub struct Fleet {
     hubs: Vec<InputHub>,
-    lane_slots: Vec<Vec<u32>>,
     slots: Vec<Option<FleetSlot>>,
     handles: HashMap<u32, u32, FxBuild>,
+    tab_to_idx: HashMap<u32, u32, FxBuild>,
     free: Vec<u32>,
     hot: Vec<u32>,
     sites: HashMap<u64, SiteEntry, FxBuild>,
@@ -76,9 +77,9 @@ impl Fleet {
             .unwrap_or(1);
         Self {
             hubs: (0..n).map(|_| InputHub::new()).collect(),
-            lane_slots: (0..n).map(|_| Vec::new()).collect(),
             slots: Vec::new(),
             handles: fx_map(),
+            tab_to_idx: fx_map(),
             free: Vec::new(),
             hot: Vec::new(),
             sites: fx_map(),
@@ -145,7 +146,7 @@ impl Fleet {
         let (from, target) = payload_gen::placement(&profile, u64::from(tab.0));
         let batch_interval = batch_interval_for(profile.canvas_seed ^ u64::from(tab.0));
         let mut http_session = Session::new(Arc::clone(&profile), origin);
-        http_session.jar = jar.clone();
+        http_session.jar.copy_matching(jar, origin);
         let endpoint_resolved =
             core_utils::join_origin(&http_session.origin, route.endpoint.as_str(), false);
         let trust = http_session.trust();
@@ -169,6 +170,7 @@ impl Fleet {
             }),
             batcher: TelemetryBatcher::new(BATCH_CAP, batch_interval),
             scratch: bytes::BytesMut::with_capacity((BATCH_CAP + 32) * RAW_EVENT_LEN),
+            cookie_scratch: session_state::CookieScratch::default(),
             events_total: 0,
             batches: 0,
         };
@@ -179,9 +181,8 @@ impl Fleet {
             self.slots.push(Some(slot));
             (self.slots.len() - 1) as u32
         };
-        self.lane_slots[lane_pick].push(tab.0);
+        self.tab_to_idx.insert(tab.0, idx);
         self.handles.insert(handle, idx);
-        self.hot.push(idx);
         self.live += 1;
         let exp = Instant::now() + self.session_ttl;
         self.expiry_heap.push(Reverse((exp, idx, handle)));
@@ -215,15 +216,10 @@ impl Fleet {
     }
 
     fn retire(&mut self, index: u32, slot: FleetSlot) {
+        self.tab_to_idx.remove(&slot.hub_tab);
         let lane = self.lane(slot.hub_tab);
         let local = SlotId(slot.hub_tab / self.hubs.len() as u32);
         self.hubs[lane].close_tab(local);
-        if let Some(pos) = self.lane_slots[lane]
-            .iter()
-            .position(|&t| t == slot.hub_tab)
-        {
-            self.lane_slots[lane].swap_remove(pos);
-        }
         if let Some(pos) = self.hot.iter().position(|&i| i == index) {
             self.hot.swap_remove(pos);
         }
@@ -270,15 +266,7 @@ impl Fleet {
     }
 
     fn slot_of(&self, tab: u32) -> Option<usize> {
-        let lane = self.lane(tab);
-        self.lane_slots[lane]
-            .iter()
-            .find(|&&t| t == tab)
-            .and_then(|&t| {
-                self.slots
-                    .iter()
-                    .position(|s| s.as_ref().is_some_and(|f| f.hub_tab == t))
-            })
+        self.tab_to_idx.get(&tab).map(|&i| i as usize)
     }
 
     pub fn calibrate(&self, handle: u32, ok: bool) {
@@ -313,7 +301,7 @@ impl Fleet {
             let mut events: TabEvents = SmallVec::new();
             hub.tick(now_us, &mut events);
             for (tab, _) in events.iter_mut() {
-                tab.0 += lane as u32;
+                tab.0 = lane as u32 + tab.0 * lanes_n;
             }
             lanes.extend(events);
         }
@@ -327,12 +315,13 @@ impl Fleet {
             self.absorb_run(tab, &lanes[i..j]);
             i = j;
         }
-        let _ = lanes_n;
         let hot = core::mem::take(&mut self.hot);
-        for idx in hot.iter().copied() {
+        let mut keep: Vec<u32> = Vec::with_capacity(hot.len());
+        for idx in hot {
             let Some(slot) = self.slots.get_mut(idx as usize).and_then(|s| s.as_mut()) else {
                 continue;
             };
+            let mut keep_hot = true;
             if slot.batcher.ready(now_us) && !slot.scratch.is_empty() {
                 slot.batches += 1;
                 let n = (slot.scratch.len() / RAW_EVENT_LEN) as u64;
@@ -341,7 +330,8 @@ impl Fleet {
                 let cookie = slot
                     .session
                     .jar
-                    .header_for_url(slot.route_bundle.endpoint.as_str())
+                    .header_for_url_into(slot.route_bundle.endpoint.as_str(), &mut slot.cookie_scratch)
+                    .map(CompactString::new)
                     .unwrap_or_default();
                 jobs.push(PushJob {
                     handle: slot.handle,
@@ -351,9 +341,13 @@ impl Fleet {
                     blob,
                     events: n,
                 });
+                keep_hot = !slot.scratch.is_empty();
+            }
+            if keep_hot {
+                keep.push(idx);
             }
         }
-        self.hot = hot;
+        self.hot = keep;
     }
 
     fn absorb_run(&mut self, tab: SlotId, run: &[(SlotId, payload_gen::input::RawEvent)]) {
@@ -365,18 +359,13 @@ impl Fleet {
         };
         let n = run.len();
         slot.scratch.reserve(n * RAW_EVENT_LEN);
-        unsafe {
-            let mut w = slot.scratch.len();
-            let ptr = slot.scratch.as_mut_ptr();
-            for (_, ev) in run {
-                ptr.add(w)
-                    .copy_from_nonoverlapping(ev as *const _ as *const u8, RAW_EVENT_LEN);
-                w += RAW_EVENT_LEN;
-            }
-            slot.scratch.set_len(w);
+        for (_, ev) in run {
+            slot.scratch
+                .extend_from_slice(payload_gen::input::events_bytes(core::slice::from_ref(ev)));
         }
         slot.events_total += n as u64;
         slot.batcher.feed(n);
+        self.hot.push(i as u32);
     }
 
 

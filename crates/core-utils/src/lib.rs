@@ -5,10 +5,10 @@ pub mod rng;
 pub mod sys;
 pub mod tz;
 pub mod url;
-
+pub mod profile;
 pub use crypto::{
     BLAKE2B_G_COLS, H0, K32, KdfError, PBKDF2_MAX_ITERATIONS, SUBTLE_MAX_OUT_BYTES,
-    adler32_feed, adler32_zeros, be32_words, blake2b, blake2b_long, canvas_hex_of, compress8,
+    adler32_feed, adler32_zeros, be32_words, blake2b, blake2b_long, compress8,
     cpu_avx2, cpu_avx512cd, cpu_sha, crc32_feed, digest_bytes, hmac_sha256_into, lz_batch16, lz_batch16_ref,
     lz_carry_chain, lz_words_be, md5_hex_into, pair_mut, pbkdf2_sha256_into, sha1_into, sha256,
     sha256_block, sha256_hex_into, sha256_into, sha256_midstate, sha256_seed_tail, sha_tail_pad,
@@ -40,8 +40,8 @@ pub use rng::{
 pub use sys::{env_flag, pin_thread, unix_ms, unix_ms_f64, unix_us};
 pub use tz::{TzIdx, all_zone_names, country_of, tz_offset_for, tz_offset_zone, zone_of, zone_label_zone};
 pub use url::{
-    Authority, HrefParts, StrExt, host_of, join_origin, origin_of, path_of, split_authority,
-    split_href,
+    Authority, HrefParts, StrExt, host_of, host_of_into, join_origin, origin_of, path_of,
+    split_authority, split_href,
 };
 
 pub use simdutf8 as utf8;

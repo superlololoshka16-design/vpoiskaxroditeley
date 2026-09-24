@@ -213,6 +213,14 @@ pub fn host_of(url: &str) -> CompactString {
     url.host()
 }
 
+pub fn host_of_into(url: &str, out: &mut compact_str::CompactString) {
+    let a = split_authority(url);
+    out.clear();
+    for &b in a.host.as_bytes() {
+        out.push(char::from(b.to_ascii_lowercase()));
+    }
+}
+
 #[inline]
 pub fn path_of(url: &str) -> &str {
     let after = url.find("://").map(|i| i + 3).unwrap_or(0);

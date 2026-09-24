@@ -184,9 +184,14 @@ impl Collector {
             }
             ScriptEvKind::AnubisVersion => {
                 if self.anubis_version.is_none() && !cap.buf.is_empty() {
-                    let s = String::from_utf8_lossy(&cap.buf);
-                    let s = s.trim().trim_matches('"');
-                    self.anubis_version = Some(CompactString::from(truncate_str(s, 32)));
+                    let s = core_utils::utf8::basic::from_utf8(&cap.buf)
+                        .map(|s| {
+                            s.trim().trim_matches('"')
+                        })
+                        .ok();
+                    if let Some(s) = s {
+                        self.anubis_version = Some(CompactString::from(truncate_str(s, 32)));
+                    }
                 }
             }
         }

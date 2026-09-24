@@ -81,9 +81,9 @@ impl Reply {
 
     fn decode_text(&mut self) {
         if self.text.is_none() {
-            self.text = Some(match String::from_utf8_lossy(&self.body) {
-                Cow::Borrowed(s) => CompactString::new(s),
-                Cow::Owned(s) => CompactString::from(s),
+            self.text = Some(match core_utils::utf8::basic::from_utf8(&self.body) {
+                Ok(s) => CompactString::from(s),
+                Err(_) => CompactString::from(String::from_utf8_lossy(&self.body).into_owned()),
             });
         }
     }
@@ -283,20 +283,26 @@ impl Xhr {
     #[qjs(get, rename = "response")]
     pub fn response<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let kind = with_xhr(self.id, |s| s.response_kind).unwrap_or(RESP_KIND_PLAIN);
+        let ctx_j = ctx.clone();
         let json_text = |id: u64| -> rquickjs::Result<Option<rquickjs::String<'js>>> {
-            with_xhr(id, |s| {
+            let inner = with_xhr(id, |s| {
                 s.reply
                     .as_mut()
                     .map(|r| {
                         r.decode_text();
                         match r.text.as_deref() {
-                            Some(t) if !t.is_empty() => rquickjs::String::from_str(ctx, t),
-                            _ => Ok(None),
+                            Some(t) if !t.is_empty() => {
+                                Some(rquickjs::String::from_str(ctx_j.clone(), t))
+                            }
+                            _ => None,
                         }
                     })
-                    .transpose()
-            })
-            .flatten()
+                    .flatten()
+            });
+            match inner.flatten() {
+                Some(r) => r.map(Some),
+                None => Ok(None),
+            }
         };
         match kind {
             RESP_KIND_TEXT => with_xhr(self.id, |s| {

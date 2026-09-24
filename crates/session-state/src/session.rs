@@ -31,6 +31,7 @@ pub struct SessionHot {
 pub struct Session {
     pub id: TabId,
     pub jar: CookieJar,
+    pub cookie_scratch: CookieScratch,
     pub profile: Arc<Profile>,
     pub origin: CompactString,
     pub hot: SessionHot,
@@ -41,6 +42,7 @@ impl Session {
         Self {
             id: TabId::new(),
             jar: CookieJar::new(),
+            cookie_scratch: CookieScratch::default(),
             profile,
             origin: CompactString::new(origin),
             hot: SessionHot {
@@ -95,6 +97,7 @@ struct CookieEntry {
 #[derive(Default, Clone)]
 pub struct CookieJar {
     map: IndexMap<(CompactString, CompactString, CompactString), CookieEntry, FxBuild>,
+    by_name: std::collections::HashMap<CompactString, SmallVec<[u32; 2]>, FxBuild>,
     next_seq: u64,
 }
 
@@ -123,15 +126,23 @@ fn path_matches(request_path: &str, cookie_path: &str) -> bool {
 }
 
 fn parent_path(url: &str) -> CompactString {
+    let mut out = CompactString::new("");
+    parent_path_into(url, &mut out);
+    out
+}
+
+fn parent_path_into(url: &str, out: &mut CompactString) {
+    out.clear();
     let path = core_utils::path_of(url);
     let q = path.find(['?', '#']).unwrap_or(path.len());
     let path = &path[..q];
     if path.is_empty() {
-        return CompactString::const_new("/");
+        out.push('/');
+        return;
     }
     match path.rfind('/') {
-        Some(0) | None => CompactString::const_new("/"),
-        Some(i) => CompactString::new(&path[..i]),
+        Some(0) | None => out.push('/'),
+        Some(i) => out.push_str(&path[..i]),
     }
 }
 
@@ -140,11 +151,22 @@ fn attr_of(part: &str) -> Option<(&str, &str)> {
     Some((part[..eq].trim(), part[eq + 1..].trim()))
 }
 
+#[derive(Default)]
+pub struct CookieScratch {
+    host: CompactString,
+    path: CompactString,
+    buf: SmallVec<[u8; 256]>,
+    out: CompactString,
+}
 impl CookieJar {
     pub fn new() -> Self {
         Self::default()
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.next_seq = 0;
+    }
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -153,6 +175,48 @@ impl CookieJar {
         self.map.is_empty()
     }
 
+    pub fn copy_matching(&mut self, from: &CookieJar, url: &str) {
+        let host = host_key(core_utils::host_of(url).as_str());
+        let host = host.as_str();
+        let path = parent_path(url);
+        let secure_ok = url_is_secure(url);
+        let now = core_utils::unix_ms();
+        for ((name, domain, cpath), entry) in from.map.iter() {
+            if entry.expires_ms <= now {
+                continue;
+            }
+            if entry.secure && !secure_ok {
+                continue;
+            }
+            if !domain_matches(host, domain.as_str(), entry.host_only) {
+                continue;
+            }
+            if !path_matches(path.as_str(), cpath.as_str()) {
+                continue;
+            }
+            let creation_seq = match self.map.get(&(name, domain, cpath)) {
+                Some(e) => e.creation_seq,
+                None => {
+                    let seq = self.next_seq;
+                    self.next_seq = self.next_seq.wrapping_add(1);
+                    seq
+                }
+            };
+            let key = (name, domain, cpath);
+            let value = entry.value.clone();
+            let (host_only, expires_ms, secure) = (entry.host_only, entry.expires_ms, entry.secure);
+            self.map.insert(
+                key,
+                CookieEntry {
+                    value,
+                    host_only,
+                    expires_ms,
+                    secure,
+                    creation_seq,
+                },
+            );
+        }
+    }
     pub fn ingest(&mut self, set_cookie: &str) {
         self.ingest_scoped(set_cookie, "", "");
     }
@@ -230,23 +294,18 @@ impl CookieJar {
         }
         if self.map.len() >= JAR_CAP {
             let now = core_utils::unix_ms();
-            let mut victim_key = (u64::MAX, u64::MAX);
-            let mut victim: Option<(CompactString, CompactString, CompactString)> = None;
-            self.map.retain(|k, e| {
-                if e.expires_ms <= now {
-                    return false;
+            self.map.retain(|_, e| e.expires_ms > now);
+            if self.map.len() >= JAR_CAP {
+                let mut victim_idx = 0usize;
+                let mut victim_key = (u64::MAX, u64::MAX);
+                for (i, (_, e)) in self.map.iter().enumerate() {
+                    let key = (e.expires_ms, e.creation_seq);
+                    if key < victim_key {
+                        victim_key = key;
+                        victim_idx = i;
+                    }
                 }
-                let key = (e.expires_ms, e.creation_seq);
-                if key < victim_key {
-                    victim_key = key;
-                    victim = Some(k.clone());
-                }
-                true
-            });
-            if self.map.len() >= JAR_CAP
-                && let Some(k) = victim
-            {
-                self.map.shift_remove(&k);
+                self.map.shift_remove_index(victim_idx);
             }
         }
         let key = (CompactString::new(name), domain, path);
@@ -303,12 +362,29 @@ impl CookieJar {
     }
 
     pub fn header_for_url(&self, url: &str) -> Option<CompactString> {
-        let host = url.host();
-        let path = parent_path(url);
+        let mut scratch = CookieScratch::default();
+        self.header_for_url_into(url, &mut scratch)
+            .map(|h| CompactString::new(h))
+    }
+
+    pub fn header_for_url_into<'a>(
+        &self,
+        url: &str,
+        scratch: &'a mut CookieScratch,
+    ) -> Option<&'a str> {
+        scratch.host.clear();
+        core_utils::host_of_into(url, &mut scratch.host);
+        let host = scratch.host.as_str();
+        scratch.path.clear();
+        parent_path_into(url, &mut scratch.path);
         let secure_ok = url_is_secure(url);
-        let mut buf: SmallVec<[u8; 256]> = SmallVec::new();
-        self.header_for_into(host.as_str(), path.as_str(), secure_ok, &mut buf);
-        header_string(&buf)
+        scratch.buf.clear();
+        self.header_for_into(host, scratch.path.as_str(), secure_ok, &mut scratch.buf);
+        header_string(&scratch.buf).map(|s| {
+            scratch.out.clear();
+            scratch.out.push_str(s.as_str());
+            scratch.out.as_str()
+        })
     }
 
     fn header_for_into(

@@ -64,7 +64,7 @@ impl BatchCtx for PowCtx {
 }
 
 pub fn solve(data: &[u8], difficulty: u8, threads: usize) -> Option<(u64, [u8; 32])> {
-    crate::scan::batched_solve(&PowCtx::new(data, difficulty), threads)
+    crate::scan::batched_solve(PowCtx::new(data, difficulty), threads)
 }
 
 pub fn solve_until(
@@ -73,5 +73,5 @@ pub fn solve_until(
     threads: usize,
     abort: &std::sync::atomic::AtomicBool,
 ) -> Option<(u64, [u8; 32])> {
-    crate::scan::batched_solve_until(&PowCtx::new(data, difficulty), threads, abort)
+    crate::scan::batched_solve_until(PowCtx::new(data, difficulty), threads, abort)
 }

@@ -1511,8 +1511,10 @@ pub(crate) unsafe fn ab_bytes_mut<'js>(v: &Value<'js>) -> Option<&'js mut [u8]> 
 }
 
 pub(crate) fn value_to_bytes(v: &Value<'_>) -> Option<bytes::Bytes> {
-    if let Some(s) = v.as_string() {
-        return s.to_string().ok().map(|x| Bytes::from(x.into_bytes()));
+    if let Some(s) = v.as_string()
+        && let Ok(cs) = s.clone().to_cstring()
+    {
+        return Some(bytes::Bytes::copy_from_slice(cs.as_bytes()));
     }
     if let Some(b) = ab_bytes(v) {
         return Some(Bytes::copy_from_slice(b));
@@ -4165,17 +4167,16 @@ pub(crate) fn overlay_first_tag(tag: &str) -> Option<u32> {
 }
 
 pub(crate) fn find_by_id_view(id: &str) -> Option<u32> {
-    let key = CompactString::new(id);
     let hit = with_rt(|rt| {
         let d = &rt.dom;
-        if let Some(list) = d.id_index.get(&key) {
+        if let Some(list) = d.id_index.get(id) {
             for &n in list {
                 if d.slots[MutDom::si(n)].parent != u32::MAX {
                     return Some(n);
                 }
             }
         }
-        if let Some(list) = d.base_id_index.get(&key) {
+        if let Some(list) = d.base_id_index.get(id) {
             for &n in list {
                 if d.place_of(n) != PLACE_DETACHED {
                     return Some(n);

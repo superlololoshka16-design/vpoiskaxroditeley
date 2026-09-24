@@ -200,7 +200,7 @@ fn draw_scene(r: &mut CanvasRaster) {
     r.arc(48.0, 24.0, 8.0, 0.0, TAU);
     r.fill();
     r.set_fill(parse_color("black"));
-    r.fill_text("Zg", 6.0, 40.0);
+    r.fill_text("Zg", 6.0, 40.0, 12.0);
 }
 
 #[test]
@@ -379,32 +379,32 @@ fn ellipse_fill_shape() {
 fn fill_text_renders_deterministic_glyphs() {
     let mut r = CanvasRaster::new(0x7E57);
     r.set_fill(parse_color("black"));
-    r.fill_text("Ag", 2.0, 9.0);
+    r.fill_text("Ag", 2.0, 9.0, 12.0);
     let px = r.render(24, 16);
     let opaque = px.chunks_exact(4).filter(|p| p[3] > 0).count();
     assert!(opaque > 10, "glyph coverage too low: {opaque}");
 
     let mut r2 = CanvasRaster::new(0x7E57);
     r2.set_fill(parse_color("black"));
-    r2.fill_text("Ag", 2.0, 9.0);
+    r2.fill_text("Ag", 2.0, 9.0, 12.0);
     assert_eq!(px, r2.render(24, 16));
 
     let mut r3 = CanvasRaster::new(0x7E57);
     r3.set_fill(parse_color("black"));
-    r3.fill_text("AG", 2.0, 9.0);
+    r3.fill_text("AG", 2.0, 9.0, 12.0);
     assert_ne!(px, r3.render(24, 16));
 }
 
 #[test]
 fn fill_text_non_ascii_uses_stable_pseudo_glyph() {
     let mut a = CanvasRaster::new(21);
-    a.fill_text("Ж", 2.0, 9.0);
+    a.fill_text("Ж", 2.0, 9.0, 12.0);
     let pa = a.render(24, 16);
     let mut b = CanvasRaster::new(21);
-    b.fill_text("Ж", 2.0, 9.0);
+    b.fill_text("Ж", 2.0, 9.0, 12.0);
     assert_eq!(pa, b.render(24, 16));
     let mut c = CanvasRaster::new(21);
-    c.fill_text("A", 2.0, 9.0);
+    c.fill_text("A", 2.0, 9.0, 12.0);
     assert_ne!(pa, c.render(24, 16));
 }
 
@@ -413,7 +413,7 @@ fn stroke_text_renders_outlines() {
     let mut r = CanvasRaster::new(15);
     r.set_stroke(parse_color("white"));
     r.set_line_width(1.0);
-    r.stroke_text("W", 2.0, 10.0);
+    r.stroke_text("W", 2.0, 10.0, 12.0);
     let px = r.render(20, 16);
     assert!(px.chunks_exact(4).any(|p| p[3] > 0));
 }
@@ -423,7 +423,7 @@ fn resize_resets_bitmap_and_state() {
     let mut r = CanvasRaster::new(4);
     r.set_fill(parse_color("red"));
     r.fill_rect(0.0, 0.0, 8.0, 8.0);
-    r.fill_text("Q", 1.0, 5.0);
+    r.fill_text("Q", 1.0, 5.0, 12.0);
     r.resize();
     assert!(r.render(8, 8).iter().all(|&b| b == 0));
     r.fill_rect(0.0, 0.0, 8.0, 8.0);
