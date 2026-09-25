@@ -1,6 +1,6 @@
 use supervisor::api;
 use supervisor::flow::{self, VisitCtx, profile_for_host_with_overrides};
-use supervisor::ms;
+use core_utils::ms;
 use supervisor::site_override::SiteOverrides;
 use supervisor::stats::{StatBlock, StatsRef, p50p99, render_rss};
 

@@ -15,7 +15,7 @@ use runtime_exec::{
 use session_state::{Profile, ProxyConfig, Session};
 use smallvec::SmallVec;
 
-use crate::ms;
+use core_utils::ms;
 use crate::site_key;
 use crate::site_override::SiteOverrides;
 use crate::stats::StatsRef;
@@ -216,12 +216,7 @@ pub async fn run_challenge(
     let req = with_input(req, session.profile.as_ref(), f.uri.as_str(), session.trust());
     let outcome = ctx.pool.exec(req).await;
     if let Some(line) = outcome.cookie_out.as_deref() {
-        let origin = f.uri.as_str();
-        let host = session.host();
-        let path = core_utils::path_of(origin);
-        for kv in line.split(';') {
-            session.jar.ingest_scoped(kv.trim(), host.as_str(), path);
-        }
+        session.jar.ingest_header(line, f.uri.as_str());
     }
     session.record_challenge(outcome.token.is_some());
     Some(ChallengeOutcome {
@@ -309,7 +304,7 @@ pub struct AnubisPageCtx<'a> {
 pub async fn anubis_page_flow(
     pc: AnubisPageCtx<'_>,
 ) -> Result<AnubisFlow, String> {
-    let AnubisPageCtx { ctx, session, url, f, anub, slot, hold_ms } = pc;
+    let AnubisPageCtx { ctx, session, url, f, anub, slot, .. } = pc;
     let t0 = Instant::now();
     let raw = bytes::Bytes::clone(anub);
     let (ch, sol) = solve_anubis(AnubisReq {

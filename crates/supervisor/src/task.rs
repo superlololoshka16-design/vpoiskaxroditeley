@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use sonic_rs::{JsonValueMutTrait as _, JsonValueTrait as _};
 
-use crate::ms;
+use core_utils::ms;
 
 pub type TaskId = u64;
 

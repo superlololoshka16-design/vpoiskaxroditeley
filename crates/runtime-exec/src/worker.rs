@@ -44,37 +44,36 @@ pub(crate) mod dispatch {
             })
         }
 
-        pub(crate) fn feed(
+
+        pub(crate) fn feed_ctx(
             &self,
-            context: &Context,
+            ctx: &Ctx<'_>,
             input: Option<&Arc<[payload_gen::input::RawEvent]>>,
         ) {
-            context.with(|ctx| {
-                let Ok(reset) = self.reset.clone().restore(&ctx) else {
-                    return;
-                };
-                let cleared: Result<Value, _> = reset.call(());
-                if cleared.is_err() {
-                    let _ = ctx.catch();
-                }
-                let Some(events) = input else {
-                    return;
-                };
-                if events.is_empty() {
-                    return;
-                }
-                let Ok(feed) = self.feed.clone().restore(&ctx) else {
-                    return;
-                };
-                let bytes = payload_gen::input::events_bytes(events);
-                let Ok(buf) = rquickjs::ArrayBuffer::new_copy(ctx.clone(), bytes) else {
-                    return;
-                };
-                let out: Result<Value, _> = feed.call((buf,));
-                if out.is_err() {
-                    let _ = ctx.catch();
-                }
-            })
+            let Ok(reset) = self.reset.clone().restore(ctx) else {
+                return;
+            };
+            let cleared: Result<Value, _> = reset.call(());
+            if cleared.is_err() {
+                let _ = ctx.catch();
+            }
+            let Some(events) = input else {
+                return;
+            };
+            if events.is_empty() {
+                return;
+            }
+            let Ok(feed) = self.feed.clone().restore(ctx) else {
+                return;
+            };
+            let bytes = payload_gen::input::events_bytes(events);
+            let Ok(buf) = rquickjs::ArrayBuffer::new_copy(ctx.clone(), bytes) else {
+                return;
+            };
+            let out: Result<Value, _> = feed.call((buf,));
+            if out.is_err() {
+                let _ = ctx.catch();
+            }
         }
 
         pub(crate) fn fire_domready_ctx(&self, ctx: &Ctx<'_>) {
@@ -1499,7 +1498,7 @@ fn native_mem_getter<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Function<'js>> {
 impl JsEnv {
     fn new(bundle: &Bundle) -> Result<Self, rquickjs::Error> {
         let runtime = Runtime::new()?;
-        if std::env::var_os("SILO_LEAK_DUMP").is_some() {
+        if core_utils::env_present("SILO_LEAK_DUMP") {
             runtime.set_dump_flags(0x4000);
         }
         runtime.set_memory_limit(mem_limit());
@@ -1805,6 +1804,9 @@ impl JsEnv {
                 ..
             } = self;
             context.with(|ctx| {
+                if let Some(d) = dispatch.as_ref() {
+                    d.feed_ctx(&ctx, input);
+                }
                 let sha = sha256.clone().restore(&ctx)?;
                 let md = md5.clone().restore(&ctx)?;
                 let mut cache = fns.borrow_mut();
@@ -2008,7 +2010,7 @@ impl Worker {
             ExecKind::Anubis => {
                 let solved = anubis_solve(&req, control);
                 let ev = if solved.is_ok() {
-                    Event::ExecDone(start.elapsed().as_millis() as u64)
+                    Event::ExecDone(core_utils::ms(start, std::time::Instant::now()))
                 } else {
                     Event::ExecFail
                 };
@@ -2115,7 +2117,7 @@ impl Worker {
         }
         let _ = self
             .events
-            .try_send(Event::ExecDone(start.elapsed().as_millis() as u64));
+            .try_send(Event::ExecDone(core_utils::ms(start, std::time::Instant::now())));
         outcome_now(token_opt, path, raw_hit || local_hit, err)
     }
 }

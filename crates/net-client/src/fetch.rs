@@ -85,7 +85,7 @@ pub fn is_forbidden_ip(ip: IpAddr) -> bool {
 }
 
 fn env_allows_private_network() -> bool {
-    std::env::var_os("SILO_ALLOW_PRIVATE_NETWORK").is_some_and(|v| v != "0")
+    core_utils::env_present("SILO_ALLOW_PRIVATE_NETWORK")
 }
 
 fn num_radix(p: &str) -> Option<u64> {
@@ -405,7 +405,7 @@ pub async fn fetch_page_sel(
             uri: CompactString::new(url),
             page: Arc::new(PageData::empty()),
             bytes_in: 0,
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: core_utils::ms(start, Instant::now()),
             challenge_vendor: VENDOR_NONE,
         });
     }
@@ -511,7 +511,7 @@ pub async fn fetch_page_sel(
         uri,
         page: Arc::new(page),
         bytes_in,
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: core_utils::ms(start, Instant::now()),
         challenge_vendor: vendor,
     })
 }

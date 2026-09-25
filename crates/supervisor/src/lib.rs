@@ -173,14 +173,10 @@ pub mod site_override;
 pub mod task;
 pub mod watch;
 
-pub fn ms(a: std::time::Instant, b: std::time::Instant) -> u64 {
-    b.saturating_duration_since(a).as_millis() as u64
+pub fn site_key(s: &str) -> u64 {
+    core_utils::host_hash(s)
 }
 
-pub fn site_key(host: &str) -> u64 {
-    core_utils::xxh3::hash(core_utils::host_of(host).as_bytes())
-}
-
-pub fn catalog_slot_of(host: &str, catalog_len: usize) -> usize {
-    (site_key(host) as usize) % catalog_len.max(1)
+pub fn catalog_slot_of(url_or_host: &str, catalog_len: usize) -> usize {
+    (site_key(url_or_host) as usize) % catalog_len.max(1)
 }

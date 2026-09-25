@@ -28,7 +28,7 @@ use crate::fleet::{Fleet, FleetMsg, fleet_daemon};
 use crate::flow::{
     self, AnubisFlow, VisitCtx, anubis_answer_value, exec_script, profile_for_task, run_challenge,
 };
-use crate::ms;
+use core_utils::ms;
 use crate::task::{
     Job, ST_FAILED, ST_PROCESSING, ST_READY, TASK_QUEUE_CAP, TaskId, TaskKind, TaskOutcome,
     TaskRec, canonical_method, next_task_id, req_by_method, stamp_outcome, vset, vstr,

@@ -286,6 +286,11 @@ pub fn ou_step(v: f64, theta_dt: f64, diffusion: f64) -> f64 {
     v + (-theta_dt * v + diffusion)
 }
 
+#[inline(always)]
+pub fn hypot2(dx: f64, dy: f64) -> f64 {
+    (dx * dx + dy * dy).sqrt()
+}
+
 pub struct Perlin2D {
     perm: [u8; 512],
 }

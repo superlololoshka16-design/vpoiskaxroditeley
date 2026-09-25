@@ -246,18 +246,6 @@
         x = x | 0; y = y | 0; kind = kind | 0; arg = arg | 0;
         IS_TOUCH = isTouch();
         if (kind === KIND_MOVE) {
-            if (!IS_TOUCH) {
-                var hv = hitAt(x, y);
-                if (hv && hv !== lastHit) { enterTarget(hv, x, y); }
-                else if (!hv && lastHit) {
-                    var lv2 = fixProps(mouseProps(x, y, heldButtons, 0, 0), lastHit);
-                    publish("pointerout", makeEvent("pointerout", lv2));
-                    publish("mouseout", makeEvent("mouseout", lv2));
-                    publish("pointerleave", makeEvent("pointerleave", lv2));
-                    publish("mouseleave", makeEvent("mouseleave", lv2));
-                    lastHit = null;
-                }
-            }
             var mp = mouseProps(x, y, heldButtons, 0, 0);
             publish("pointermove", makeEvent("pointermove", mp));
             if (IS_TOUCH) {

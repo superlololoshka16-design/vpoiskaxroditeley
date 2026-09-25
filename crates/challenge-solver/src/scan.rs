@@ -17,7 +17,7 @@ pub(crate) fn need_bits_of(difficulty: u8) -> u32 {
 
 pub(crate) fn cpu_avx512_enabled() -> bool {
     static V: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
-        !std::env::var_os("SILO_POW_NO_AVX512").is_some_and(|v| v != "0")
+        !core_utils::env_present("SILO_POW_NO_AVX512")
             && core_utils::cpu_avx512cd()
     });
     *V
@@ -422,16 +422,18 @@ where
     }
     drop(jtx);
 
+    let mut spin = 0u32;
     while done.0.load(Ordering::Acquire) < spawned {
         if abort.load(Ordering::Relaxed) {
             stop.store(true, Ordering::Release);
             break;
         }
-        if crate::watch_fired() {
+        if spin & 0x3FF == 0 && crate::watch_fired() {
             stop.store(true, Ordering::Release);
             abort.store(true, Ordering::Release);
             break;
         }
+        spin = spin.wrapping_add(1);
         std::hint::spin_loop();
     }
     let mut best: Option<(u64, [u8; 32])> = None;

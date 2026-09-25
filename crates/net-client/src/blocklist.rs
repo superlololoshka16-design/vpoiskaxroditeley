@@ -36,14 +36,17 @@ pub fn is_blocked_host(host: &str) -> bool {
 }
 
 pub fn url_blocked(url: &str) -> bool {
-    let host = core_utils::url::split_authority(url).host;
-    if host.is_empty() {
+    let raw = core_utils::url::split_authority(url).host;
+    if raw.is_empty() {
         return false;
     }
-
-    match crate::fetch::normalize_host_whatwg(host) {
-        Some(norm) => !norm.is_empty() && is_blocked_host(norm.as_str()),
-
+    match crate::fetch::normalize_host_whatwg(raw) {
+        Some(norm) => host_blocked(norm.as_str()),
         None => true,
     }
+}
+
+#[inline]
+pub fn host_blocked(norm_host: &str) -> bool {
+    !norm_host.is_empty() && is_blocked_host(norm_host)
 }

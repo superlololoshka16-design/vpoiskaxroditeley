@@ -29,7 +29,7 @@ pub use math::{
     bump_u64_id, civil_from_days, days_from_civil, days_in_month, dow_from_days,
     epoch_ms_from_civil, float_to_compact, floor_char_boundary, floor_char_boundary_bytes,
     format_js_float,
-    fx_map, int_to_compact, ou_step, push_int_into, push_int_padded_into, push_px_into,
+    fx_map, hypot2, int_to_compact, ou_step, push_int_into, push_int_padded_into, push_px_into,
     px_to_compact, truncate_str, u64_digits_fixed_into, u64_digits_into, year_from_days,
 };
 pub use rng::{
@@ -40,8 +40,8 @@ pub use rng::{
 pub use sys::{env_flag, env_present, ms, pin_thread, unix_ms, unix_ms_f64, unix_us};
 pub use tz::{TzIdx, all_zone_names, country_of, tz_offset_for, tz_offset_zone, zone_of, zone_label_zone};
 pub use url::{
-    Authority, HrefParts, StrExt, host_of, host_of_into, join_origin, origin_of, path_of,
-    split_authority, split_href,
+    Authority, HrefParts, StrExt, host_hash, host_of, host_of_into, join_origin, origin_of,
+    path_of, split_authority, split_href,
 };
 
 pub use simdutf8 as utf8;

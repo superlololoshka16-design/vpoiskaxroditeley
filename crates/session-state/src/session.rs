@@ -167,6 +167,19 @@ impl CookieJar {
         self.by_name.clear();
         self.next_seq = 0;
     }
+    fn rebuild_by_name(&mut self) {
+        self.by_name.clear();
+        for (i, (k, _)) in self.map.iter().enumerate() {
+            match self.by_name.get_mut(k.0.as_str()) {
+                Some(v) => v.push(i as u32),
+                None => {
+                    let mut v = SmallVec::new();
+                    v.push(i as u32);
+                    self.by_name.insert(k.0.clone(), v);
+                }
+            }
+        }
+    }
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -308,7 +321,11 @@ impl CookieJar {
         }
         if self.map.len() >= JAR_CAP {
             let now = core_utils::unix_ms();
+            let before = self.map.len();
             self.map.retain(|_, e| e.expires_ms > now);
+            if self.map.len() != before {
+                self.rebuild_by_name();
+            }
             if self.map.len() >= JAR_CAP {
                 let mut victim_idx = 0usize;
                 let mut victim_key = (u64::MAX, u64::MAX);
@@ -319,19 +336,8 @@ impl CookieJar {
                         victim_idx = i;
                     }
                 }
-                if self.map.shift_remove_index(victim_idx).is_some() {
-                    self.by_name.clear();
-                    for (i, (k, _)) in self.map.iter().enumerate() {
-                        match self.by_name.get_mut(k.0.as_str()) {
-                            Some(v) => v.push(i as u32),
-                            None => {
-                                let mut v = SmallVec::new();
-                                v.push(i as u32);
-                                self.by_name.insert(k.0.clone(), v);
-                            }
-                        }
-                    }
-                }
+                self.map.shift_remove_index(victim_idx);
+                self.rebuild_by_name();
             }
         }
         let key = (CompactString::new(name), domain, path);
@@ -371,6 +377,14 @@ impl CookieJar {
         let host = url.host();
         let path = parent_path(url);
         self.ingest_scoped(set_cookie, host.as_str(), path.as_str());
+    }
+
+    pub fn ingest_header(&mut self, header: &str, url: &str) {
+        let host = url.host();
+        let path = parent_path(url);
+        for kv in header.split(';') {
+            self.ingest_scoped(kv.trim(), host.as_str(), path.as_str());
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<&str> {

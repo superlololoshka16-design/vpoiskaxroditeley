@@ -436,7 +436,6 @@ dependencies = [
  "core-utils",
  "crossbeam-channel",
  "memmap2",
- "scc",
  "sha2",
  "smallvec",
 ]

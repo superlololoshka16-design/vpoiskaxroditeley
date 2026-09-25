@@ -1,7 +1,7 @@
 use crate::input::event::{RawEvent, button, coord_u16, delta_ms_u16, kind as input};
 use session_state::MouseHardware;
 use session_state::Persona;
-use core_utils::math::{Perlin2D, ou_step};
+use core_utils::math::{Perlin2D, hypot2, ou_step};
 use core_utils::SplitMix64Rng;
 use core_utils::rng::seeds;
 
@@ -36,6 +36,7 @@ pub struct MotionCursor {
     start_y: f64,
     sub_t: f64,
     sub_dur: f64,
+    sub_skew: f64,
     vx: f64,
     vy: f64,
     nx: f64,
@@ -137,7 +138,7 @@ impl MotionCursor {
             hw,
         } = start;
         let mut rng = SplitMix64Rng::new(seed ^ seeds::SALT_MOTION_RNG);
-        let dist = ((to_x - from_x).powi(2) + (to_y - from_y).powi(2)).sqrt();
+        let dist = hypot2(to_x - from_x, to_y - from_y);
         let budget_ms = persona.movement_time_ms(dist, target_w, &mut rng) as u64;
         let throttle = persona.throttle(trust);
         let cool = throttle.cool;
@@ -172,6 +173,7 @@ impl MotionCursor {
             start_y: from_y,
             sub_t: 0.0,
             sub_dur: 0.0,
+            sub_skew: 1.0,
             vx: 0.0,
             vy: 0.0,
             nx: 0.0,
@@ -218,17 +220,18 @@ impl MotionCursor {
         };
         let dir_x = self.target_x - self.x;
         let dir_y = self.target_y - self.y;
-        let len = (dir_x * dir_x + dir_y * dir_y).sqrt().max(1.0);
+        let len = hypot2(dir_x, dir_y).max(1.0);
         let over_x = dir_x + (dir_x / len) * overshoot * (1.0 + self.rng.next_f64() * 0.2);
         let over_y = dir_y + (dir_y / len) * overshoot * (1.0 + self.rng.next_f64() * 0.2);
         self.start_x = self.x;
         self.start_y = self.y;
         self.sub_x = self.x + over_x;
         self.sub_y = self.y + over_y;
-        let sub_dist = (over_x * over_x + over_y * over_y).sqrt().max(1.0);
+        let sub_dist = hypot2(over_x, over_y).max(1.0);
         let peak = (self.vmax * 0.62).max(60.0);
         self.sub_dur = (1.875 * sub_dist / peak).clamp(0.045, 0.5);
         self.sub_t = 0.0;
+        self.sub_skew = 0.62 + self.rng.next_f64() * 1.1;
     }
 
     #[inline]
@@ -250,7 +253,7 @@ impl MotionCursor {
     pub fn on_target(&self) -> bool {
         let dx = self.x - self.target_x;
         let dy = self.y - self.target_y;
-        (dx * dx + dy * dy).sqrt() <= self.target_w * 0.5
+        hypot2(dx, dy) <= self.target_w * 0.5
     }
 
     pub fn step(&mut self, now_us: u64) -> Option<RawEvent> {
@@ -285,7 +288,7 @@ impl MotionCursor {
             return None;
         }
         let due_us = self.book_emit();
-        let spd = (self.vx * self.vx + self.vy * self.vy).sqrt();
+        let spd = hypot2(self.vx, self.vy);
         let amp = self.tremor_amp * (0.35 + 2.2 / (1.0 + spd * 0.008));
         self.tremor_emit(now_us, due_us, 1.0, 0.0, amp, true)
     }
@@ -334,9 +337,7 @@ impl MotionCursor {
     #[inline]
     fn emit(&mut self, ex: i32, ey: i32, at_us: u64) -> RawEvent {
         let raw_dt = at_us.saturating_sub(self.last_emit_us);
-        let quant = self.quantum_us.max(1);
-        let snapped = (raw_dt + quant / 2) / quant * quant;
-        let dt = delta_ms_u16(snapped).max(1);
+        let dt = delta_ms_u16(raw_dt).max(1);
         self.last_emit_x = ex;
         self.last_emit_y = ey;
         self.last_emit_us = at_us;
@@ -362,13 +363,13 @@ impl MotionCursor {
 
     fn integrate(&mut self, dt: f64) {
         self.sub_t += dt;
-        let tau = (self.sub_t / self.sub_dur).clamp(0.0, 1.0);
+        let tau = (self.sub_t / self.sub_dur).clamp(0.0, 1.0).powf(self.sub_skew);
         let shape = 10.0 * tau.powi(3) - 15.0 * tau.powi(4) + 6.0 * tau.powi(5);
         let guide_x = self.start_x + (self.sub_x - self.start_x) * shape;
         let guide_y = self.start_y + (self.sub_y - self.start_y) * shape;
         let dxr = self.target_x - self.x;
         let dyr = self.target_y - self.y;
-        let dl = (dxr * dxr + dyr * dyr).sqrt().max(1.0);
+        let dl = hypot2(dxr, dyr).max(1.0);
         let ux = dxr / dl;
         let uy = dyr / dl;
         self.curve = ou_step(
@@ -391,7 +392,7 @@ impl MotionCursor {
         let sy = self.noise_sigma * sqrt_dt * (dz * 0.62 + dzy * 0.79);
         self.nx = ou_step(self.nx, theta_dt, sx);
         self.ny = ou_step(self.ny, theta_dt, sy);
-        let spd = (self.vx * self.vx + self.vy * self.vy).sqrt();
+        let spd = hypot2(self.vx, self.vy);
         let far = (dl / 150.0).min(1.0);
         let gain = 1.0 + ((spd / 800.0).min(0.85)) * far;
         let c = 2.0 * self.zeta * self.k.sqrt();
@@ -399,7 +400,7 @@ impl MotionCursor {
         let fy = self.k * gain * dy + self.ny - c * self.vy;
         self.vx += fx * dt;
         self.vy += fy * dt;
-        let spd = (self.vx * self.vx + self.vy * self.vy).sqrt();
+        let spd = hypot2(self.vx, self.vy);
         if spd > self.vmax {
             let soft = self.vmax * (1.0 + 0.06 * self.rng.next_f64()) / spd;
             self.vx *= soft;
@@ -407,14 +408,14 @@ impl MotionCursor {
         }
         let hand_vx = self.vx * self.hw.counts_per_px();
         let hand_vy = self.vy * self.hw.counts_per_px();
-        let hand_spd = (hand_vx * hand_vx + hand_vy * hand_vy).sqrt();
+        let hand_spd = hypot2(hand_vx, hand_vy);
         let g = self.hw.gain(hand_spd);
         self.x += self.vx * g * dt;
         self.y += self.vy * g * dt;
         self.x = self.x.clamp(0.0, u16::MAX as f64);
         self.y = self.y.clamp(0.0, u16::MAX as f64);
         if tau >= 1.0 && self.sub_index < SUB_MAX {
-            let d = ((self.target_x - self.x).powi(2) + (self.target_y - self.y).powi(2)).sqrt();
+            let d = hypot2(self.target_x - self.x, self.target_y - self.y);
             if d > self.settle_r {
                 self.sub_index += 1;
                 self.vmax *= 0.55;
@@ -426,8 +427,8 @@ impl MotionCursor {
     fn arrived(&mut self, now_us: u64) -> bool {
         let dx = self.target_x - self.x;
         let dy = self.target_y - self.y;
-        let dist = (dx * dx + dy * dy).sqrt();
-        let spd = (self.vx * self.vx + self.vy * self.vy).sqrt();
+        let dist = hypot2(dx, dy);
+        let spd = hypot2(self.vx, self.vy);
         if dist <= self.settle_r && spd < SETTLE_SPEED_PX_S {
             self.enter_dwell(now_us);
             return true;
