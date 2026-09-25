@@ -4,9 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[repr(C, align(64))]
 struct RingSlot {
     key: AtomicU64,
-    x: u32,
-    y: u32,
-    _pad: [u32; 10],
+    xy: AtomicU64,
+    _pad: [u32; 11],
 }
 
 pub struct AnswerCache {
@@ -28,9 +27,8 @@ impl AnswerCache {
         for _ in 0..pow {
             slots.push(RingSlot {
                 key: AtomicU64::new(0),
-                x: 0,
-                y: 0,
-                _pad: [0; 10],
+                xy: AtomicU64::new(0),
+                _pad: [0; 11],
             });
         }
         AnswerCache {
@@ -45,7 +43,8 @@ impl AnswerCache {
         if slot.key.load(Ordering::Acquire) != key {
             return None;
         }
-        Some((slot.x, slot.y))
+        let xy = slot.xy.load(Ordering::Acquire);
+        Some(((xy >> 32) as u32, xy as u32))
     }
 
     pub fn record(&self, key: u64, x: u32, y: u32) {
@@ -57,8 +56,8 @@ impl AnswerCache {
         if old_key == 0 {
             self.len.fetch_add(1, Ordering::Relaxed);
         }
-        slot.x = x;
-        slot.y = y;
+        slot.xy
+            .store((u64::from(x) << 32) | u64::from(y), Ordering::Release);
         slot.key.store(key, Ordering::Release);
     }
 

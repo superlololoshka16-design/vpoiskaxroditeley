@@ -194,7 +194,8 @@ impl CookieJar {
             if !path_matches(path.as_str(), cpath.as_str()) {
                 continue;
             }
-            let existing = self.map.get_index_of(&(name, domain, cpath));
+            let key = (name.clone(), domain.clone(), cpath.clone());
+            let existing = self.map.get_index_of(&key);
             let creation_seq = match existing {
                 Some(idx) => self.map.get_index(idx).map(|(_, e)| e.creation_seq).unwrap_or_default(),
                 None => {
@@ -203,7 +204,6 @@ impl CookieJar {
                     seq
                 }
             };
-            let key = (name, domain, cpath);
             let value = entry.value.clone();
             let (host_only, expires_ms, secure) = (entry.host_only, entry.expires_ms, entry.secure);
             self.map.insert(

@@ -1,6 +1,5 @@
 #![allow(clippy::missing_safety_doc)]
 
-use compact_str::CompactString;
 use hmac::SimpleHmac;
 use md5::Digest as _;
 #[cfg(target_arch = "x86_64")]
@@ -346,30 +345,35 @@ fn adler32_block16(data: &[u8], a: &mut u32, b: &mut u32) {
     unsafe {
         use std::arch::x86_64::*;
         if cpu_avx2() {
-            let zero = _mm256_setzero_si256();
-            let v = _mm256_loadu_si256(data.as_ptr() as *const __m256i);
-            let sad = _mm256_sad_epu8(v, zero);
-            let mut sums = [0u64; 4];
-            _mm256_storeu_si256(sums.as_mut_ptr() as *mut __m256i, sad);
-            let mut la = u64::from(*a);
-            let mut lb = u64::from(*b);
-            for lane_sum in sums {
-                la += lane_sum;
-                lb += la;
-            }
-            *a = la as u32;
-            *b = lb as u32;
+            let v = _mm_loadu_si128(data.as_ptr() as *const __m128i);
+            let zero = _mm_setzero_si128();
+            let sad = _mm_sad_epu8(v, zero);
+            let mut sad_lanes = [0u64; 2];
+            _mm_storeu_si128(sad_lanes.as_mut_ptr() as *mut __m128i, sad);
+            let s = sad_lanes[0] + sad_lanes[1];
+            let wv = _mm_setr_epi8(16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1);
+            let wm = _mm_maddubs_epi16(v, wv);
+            let w32 = _mm_madd_epi16(wm, _mm_set1_epi16(1));
+            let mut wl = [0i32; 4];
+            _mm_storeu_si128(wl.as_mut_ptr() as *mut __m128i, w32);
+            let w = (wl[0] + wl[1] + wl[2] + wl[3]) as u64;
+            let la = u64::from(*a);
+            *a = (la + s) as u32;
+            *b = (u64::from(*b) + 16 * la + w) as u32;
             return;
         }
     }
-    let (mut la, mut lb) = (*a as u64, *b as u64);
-    for k in 0..16 {
-        la += u64::from(data[k]);
-        lb += la;
+    {
+        let (mut la, mut lb) = (u64::from(*a), u64::from(*b));
+        for k in 0..16 {
+            la += u64::from(data[k]);
+            lb += la;
+        }
+        *a = la as u32;
+        *b = lb as u32;
     }
-    *a = la as u32;
-    *b = lb as u32;
 }
+
 
 #[inline]
 pub fn adler32_feed(state: u32, data: &[u8]) -> u32 {
@@ -828,17 +832,6 @@ pub(crate) fn xxh3_seed_tail(seed: u64, tail: &[u8]) -> u64 {
     h.finish()
 }
 
-
-pub fn canvas_hex_of(seed: u64, vendor: &str, renderer: &str) -> CompactString {
-    let mut h = sha2::Sha256::new();
-    h.update(seed.to_le_bytes());
-    h.update((vendor.len() as u64).to_le_bytes());
-    h.update(vendor.as_bytes());
-    h.update((renderer.len() as u64).to_le_bytes());
-    h.update(renderer.as_bytes());
-    let digest: [u8; 32] = h.finalize().into();
-    crate::encoding::hex_compact(&digest, false)
-}
 
 #[inline]
 pub fn sha_tail_pad(dst: &mut [u8], at: usize, bit_len: u64) {

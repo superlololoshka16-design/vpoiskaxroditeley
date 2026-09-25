@@ -1,6 +1,6 @@
 use core_utils::crypto::{H0, sha256_block, sha256_midstate, words_be32};
 
-use crate::scan::{BatchCtx, ScanPlan, pad64, tail_digest};
+use crate::scan::{BatchCtx, ScanPlan, TailCtx, pad64, tail_digest};
 
 pub struct HmacCtx {
     inner_prefix: [u32; 8],
@@ -53,9 +53,11 @@ impl HmacCtx {
 
     pub fn digest(&self, nonce: u64, width: usize) -> [u8; 32] {
         let inner = tail_digest(
-            self.inner_prefix,
-            &self.msg_tail[..self.msg_tail_len],
-            self.total_of(width),
+            TailCtx {
+                prefix: self.inner_prefix,
+                tail: &self.msg_tail[..self.msg_tail_len],
+                total: self.total_of(width),
+            },
             nonce,
             width,
         );

@@ -168,14 +168,32 @@ pub fn req_by_method(client: &wreq::Client, method: &str, url: &str) -> wreq::Re
 
 pub type FormPairs<'a> = SmallVec<[(&'a str, &'a str); 24]>;
 
-pub fn upsert<'a>(body: &mut FormPairs<'a>, k: &'a str, v: &'a str) {
-    for (ek, ev) in body.iter_mut() {
-        if *ek == k {
-            *ev = v;
-            return;
+pub struct FormBuilder<'a> {
+    pub body: FormPairs<'a>,
+    pub index: std::collections::HashMap<&'a str, usize, core_utils::FxBuild>,
+}
+
+impl<'a> FormBuilder<'a> {
+    pub fn new() -> Self {
+        Self {
+            body: FormPairs::new(),
+            index: core_utils::fx_map(),
         }
     }
-    body.push((k, v));
+
+    pub fn upsert(&mut self, k: &'a str, v: &'a str) {
+        match self.index.get_mut(k) {
+            Some(i) => self.body[*i].1 = v,
+            None => {
+                self.index.insert(k, self.body.len());
+                self.body.push((k, v));
+            }
+        }
+    }
+
+    pub fn done(self) -> FormPairs<'a> {
+        self.body
+    }
 }
 
 pub fn vset(v: &mut sonic_rs::Value, key: &str, val: sonic_rs::Value) {

@@ -30,9 +30,8 @@ use crate::flow::{
 };
 use crate::ms;
 use crate::task::{
-    FormPairs, Job, ST_FAILED, ST_PROCESSING, ST_READY, TASK_QUEUE_CAP, TaskId, TaskKind,
-    TaskOutcome, TaskRec, canonical_method, next_task_id, req_by_method, stamp_outcome, upsert,
-    vset, vstr,
+    Job, ST_FAILED, ST_PROCESSING, ST_READY, TASK_QUEUE_CAP, TaskId, TaskKind, TaskOutcome,
+    TaskRec, canonical_method, next_task_id, req_by_method, stamp_outcome, vset, vstr,
 };
 use crate::watch::{WatchRec, note_build_change, watch_daemon, watch_put, watch_rec};
 
@@ -318,7 +317,7 @@ async fn fetch_json(
                 .await;
             let tab = reply_rx.await.unwrap_or(u32::MAX);
             vset(
-                &v,
+                &mut v,
                 "telemetry",
                 sonic_rs::json!({ "attached": tab != u32::MAX, "tabId": tab }),
             );
@@ -407,22 +406,19 @@ async fn submit_json(cx: SubmitCtx<'_>) -> Result<sonic_rs::Value, String> {
     let ctx = &st.ctx;
     let (slot, mut session) = flow::session_for(ctx, url, proxy)?;
     let f = flow::fetch_counted(ctx, slot, &mut session, url, &[]).await?;
-    let mut body: FormPairs<'_> = SmallVec::with_capacity(8 + fields.len());
+    let mut fb = crate::task::FormBuilder::new();
     for fm in &f.page.forms {
         for fd in &fm.fields {
-            upsert(
-                &mut body,
-                fd.name.as_str(),
-                fd.value.as_deref().unwrap_or(""),
-            );
+            fb.upsert(fd.name.as_str(), fd.value.as_deref().unwrap_or(""));
         }
     }
     for (k, v) in fields {
-        upsert(&mut body, k.as_str(), v.as_str());
+        fb.upsert(k.as_str(), v.as_str());
     }
     if let (Some(tf), Some(tv)) = (token_field, token) {
-        upsert(&mut body, tf.as_str(), tv.as_str());
+        fb.upsert(tf.as_str(), tv.as_str());
     }
+    let body = fb.done();
     let m_str = method
         .as_deref()
         .or_else(|| f.page.forms.first().map(|fm| fm.method.as_str()))

@@ -7,7 +7,6 @@ use crate::proxy::ProxyConfig;
 use compact_str::CompactString;
 use compact_str::ToCompactString as _;
 use core_utils::BytesExt as _;
-use core_utils::canvas_hex_of;
 use core_utils::Identity;
 use core_utils::rng::seeds;
 use std::sync::Arc;
@@ -228,7 +227,14 @@ impl Profile {
     }
 
     pub fn canvas_hex(&self) -> CompactString {
-        canvas_hex_of(self.canvas_seed, self.webgl_vendor(), self.webgl_renderer())
+        let mut buf = [0u8; 64];
+        core_utils::profile::canvas_hex_into(
+            self.canvas_seed,
+            self.webgl_vendor().as_bytes(),
+            self.webgl_renderer().as_bytes(),
+            &mut buf,
+        );
+        CompactString::from(unsafe { core::str::from_utf8_unchecked(&buf) })
     }
 
     #[inline]

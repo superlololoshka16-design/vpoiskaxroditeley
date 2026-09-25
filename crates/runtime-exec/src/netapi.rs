@@ -82,8 +82,8 @@ impl Reply {
     fn decode_text(&mut self) {
         if self.text.is_none() {
             self.text = Some(match core_utils::utf8::basic::from_utf8(&self.body) {
-                Ok(s) => CompactString::from(s),
-                Err(_) => CompactString::from(String::from_utf8_lossy(&self.body).into_owned()),
+                Ok(s) => CompactString::new(s),
+                Err(_) => CompactString::new(""),
             });
         }
     }
@@ -618,7 +618,16 @@ impl Xhr {
             return Err(throw_xhr_syntax(&ctx));
         }
         let reply = if fetch_bridge::installed() {
-            bridge_fetch(url.as_str(), method.as_str(), headers, body, cookie).map(|mut r| {
+            bridge_fetch(fetch_bridge::FetchCtx {
+                url: url.as_str(),
+                method: method.as_str(),
+                headers,
+                body,
+                cookie,
+                net_slot: crate::worker::net_slot(),
+                timeout: fetch_bridge::timeout_budget(),
+            })
+            .map(|mut r| {
                 let ok = r.ok();
                 let reply = Reply {
                     status: r.status,
@@ -715,21 +724,9 @@ impl Xhr {
 }
 
 pub(crate) fn bridge_fetch(
-    url: &str,
-    method: &str,
-    headers: crate::task::HeaderList,
-    body: Option<Bytes>,
-    cookie: CompactString,
+    fctx: fetch_bridge::FetchCtx<'_>,
 ) -> Option<crate::task::FetchReply> {
-    let reply = fetch_bridge::dispatch(fetch_bridge::FetchCtx {
-        url,
-        method,
-        headers,
-        body,
-        cookie,
-        net_slot: crate::worker::net_slot(),
-        timeout: fetch_bridge::timeout_budget(),
-    });
+    let reply = fetch_bridge::dispatch(fctx);
     if let Some(r) = reply.as_ref() {
         r.ingest_cookies();
     }

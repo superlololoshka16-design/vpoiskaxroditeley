@@ -26,7 +26,6 @@ fn font_tables(kind: FontKind) -> Option<&'static TtfTables> {
 
 struct TtfTables {
     d: &'static [u8],
-    units_per_em: u16,
     ascender: i16,
     descender: i16,
     cmap: (usize, usize),
@@ -114,7 +113,6 @@ fn parse_tables(d: &'static [u8]) -> Option<TtfTables> {
     let em_scale = 1.0 / f64::from(units_per_em);
     Some(TtfTables {
         d,
-        units_per_em,
         ascender: d.be_i16(hho + 4),
         descender: d.be_i16(hho + 6),
         cmap,

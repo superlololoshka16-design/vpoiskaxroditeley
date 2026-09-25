@@ -92,16 +92,7 @@ impl AnubisChallenge {
     }
 }
 
-const BASE_HASHES_PER_MS: f64 = 3000.0;
-const OVERHEAD_BASE_MS: f64 = 25.0;
-const JITTER_SIGMA: f64 = 0.05;
-
-pub fn emu_elapsed_ms(attempts: u64, cpu_scale: f64, jitter: f64) -> f64 {
-    let scale = core_utils::bench::scale_clamp(cpu_scale);
-    let calc_ms = attempts as f64 * scale / BASE_HASHES_PER_MS;
-    let jitter = jitter.clamp(-2.0, 2.0);
-    (calc_ms + OVERHEAD_BASE_MS) * (1.0 + JITTER_SIGMA * jitter)
-}
+pub use core_utils::profile::pow_elapsed_ms as emu_elapsed_ms;
 
 pub fn solve(
     ch: &AnubisChallenge,

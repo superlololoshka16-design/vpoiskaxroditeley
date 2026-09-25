@@ -1,6 +1,6 @@
 use core_utils::crypto::{H0, sha256_midstate};
 
-use crate::scan::{BatchCtx, ScanPlan, tail_digest};
+use crate::scan::{BatchCtx, ScanPlan, TailCtx, tail_digest};
 
 pub struct PowCtx {
     prefix: [u32; 8],
@@ -30,9 +30,11 @@ impl PowCtx {
 
     pub fn digest(&self, nonce: u64, width: usize) -> [u8; 32] {
         tail_digest(
-            self.prefix,
-            &self.tail[..self.tail_len],
-            self.data_len + width,
+            TailCtx {
+                prefix: self.prefix,
+                tail: &self.tail[..self.tail_len],
+                total: self.data_len + width,
+            },
             nonce,
             width,
         )

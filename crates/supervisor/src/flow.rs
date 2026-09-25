@@ -296,14 +296,20 @@ pub fn anubis_answer_value(sol: &anubis_solver::SolvedAnubis) -> sonic_rs::Value
     })
 }
 
+pub struct AnubisPageCtx<'a> {
+    pub ctx: &'a VisitCtx,
+    pub session: &'a mut Session,
+    pub url: &'a str,
+    pub f: &'a Fetched,
+    pub anub: &'a bytes::Bytes,
+    pub slot: usize,
+    pub hold_ms: f64,
+}
+
 pub async fn anubis_page_flow(
-    ctx: &VisitCtx,
-    session: &mut Session,
-    url: &str,
-    f: &Fetched,
-    anub: &bytes::Bytes,
-    slot: usize,
+    pc: AnubisPageCtx<'_>,
 ) -> Result<AnubisFlow, String> {
+    let AnubisPageCtx { ctx, session, url, f, anub, slot, hold_ms } = pc;
     let t0 = Instant::now();
     let raw = bytes::Bytes::clone(anub);
     let (ch, sol) = solve_anubis(AnubisReq {
@@ -314,6 +320,8 @@ pub async fn anubis_page_flow(
         slot,
     })
     .await?;
+    let real_solve_ms = t0.elapsed().as_millis() as f64;
+    let hold_ms = (sol.elapsed_time_ms - real_solve_ms).clamp(0.0, 30_000.0);
     if hold_ms > 1.0 {
         tokio::time::sleep(std::time::Duration::from_millis(hold_ms as u64)).await;
     }
@@ -479,7 +487,7 @@ pub async fn visit(ctx: &VisitCtx, req: VisitReq<'_>) -> VisitOutcome {
         let mut anubis = None;
         if let Some(anub) = fetched.page.anubis.as_ref() {
             anubis =
-                Some(anubis_page_flow(ctx, &mut session, url.as_str(), &fetched, anub, slot).await);
+                Some(anubis_page_flow(AnubisPageCtx { ctx, session: &mut session, url: url.as_str(), f: &fetched, anub, slot, hold_ms: 0.0 }).await);
         }
         let (token, nav) = if anubis_terminal_state(anubis.as_ref(), &fetched) {
             (None, None)

@@ -15,8 +15,7 @@ fn key_raw<'js>(key_obj: &Object<'js>) -> Option<&'js [u8]> {
 }
 
 fn rand_fill(buf: &mut [u8]) {
-    crate::worker::FAST_RNG.with(|cell| {
-        let mut r = cell.get();
+    crate::worker::FAST_RNG.with_borrow_mut(|r| {
         let mut i = 0;
         while i + 8 <= buf.len() {
             buf[i..i + 8].copy_from_slice(&r.next_u64().to_le_bytes());
@@ -27,7 +26,6 @@ fn rand_fill(buf: &mut [u8]) {
             let n = buf.len() - i;
             buf[i..].copy_from_slice(&tail[..n]);
         }
-        cell.set(r);
     });
 }
 

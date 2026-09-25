@@ -539,13 +539,15 @@ fn install_send_beacon<'js>(ctx: &Ctx<'js>, nav_proto: &Object<'js>) -> rquickjs
                 ));
             }
             if fetch_bridge::installed() {
-                crate::netapi::bridge_fetch(
-                    full.as_str(),
-                    "POST",
+                crate::netapi::bridge_fetch(fetch_bridge::FetchCtx {
+                    url: full.as_str(),
+                    method: "POST",
                     headers,
-                    Some(body.0),
-                    with_prof(|p| p.cookie.clone()),
-                );
+                    body: Some(body.0),
+                    cookie: with_prof(|p| p.cookie.clone()),
+                    net_slot: crate::worker::net_slot(),
+                    timeout: fetch_bridge::timeout_budget(),
+                });
             }
             Ok(Value::new_bool(c, true))
         },

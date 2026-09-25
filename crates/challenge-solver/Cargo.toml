@@ -16,6 +16,7 @@ smallvec = { workspace = true, features = ["const_generics"] }
 compact_str = { workspace = true }
 scc = { workspace = true }
 crossbeam-channel = { workspace = true }
+bumpalo = { workspace = true }
 
 [dev-dependencies]
 argon2 = "0.5"

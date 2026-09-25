@@ -1,5 +1,3 @@
-use std::hash::Hasher as _;
-
 use crate::rng::mix_ctx;
 use crate::BytesExt as _;
 
@@ -7,12 +5,13 @@ pub const BLANK_HASH: u64 = 0x0B1A_4B1A_4C0D_E511;
 
 #[inline(always)]
 pub fn raster_seed(canvas_seed: u64, vendor: &[u8], renderer: &[u8]) -> u64 {
-    let mut h = crate::xxh3::XxHash3_64::new();
-    h.write(&canvas_seed.to_le_bytes());
-    h.write(vendor);
-    h.write(&[0xFF]);
-    h.write(renderer);
-    h.finish()
+    let mut feed = [0u8; 160];
+    let vl = vendor.len().min(feed.len() - 1);
+    feed[..vl].copy_from_slice(&vendor[..vl]);
+    feed[vl] = 0xFF;
+    let rl = renderer.len().min(feed.len() - vl - 1);
+    feed[vl + 1..vl + 1 + rl].copy_from_slice(&renderer[..rl]);
+    crate::xxh3::hash_seeded(canvas_seed, &feed[..vl + 1 + rl])
 }
 
 #[inline(always)]
@@ -57,57 +56,13 @@ pub fn pow_elapsed_ms(attempts: u64, cpu_scale: f64, jitter: f64) -> f64 {
 }
 
 pub fn canvas_hex_into(canvas_seed: u64, vendor: &[u8], renderer: &[u8], out: &mut [u8; 64]) {
-    let mut st = crate::crypto::H0;
-    let mut off = 0usize;
-    let mut blk = [0u8; 64];
-    let mut total = 0usize;
-    let mut feed = |chunk: &[u8],
-                    st: &mut [u32; 8],
-                    off: &mut usize,
-                    total: &mut usize,
-                    blk: &mut [u8; 64]| {
-        let mut rest = chunk;
-        while !rest.is_empty() {
-            let take = rest.len().min(64 - *off);
-            blk[*off..*off + take].copy_from_slice(&rest[..take]);
-            *off += take;
-            *total += take;
-            rest = &rest[take..];
-            if *off == 64 {
-                crate::crypto::sha256_block(st, blk);
-                *blk = [0u8; 64];
-                *off = 0;
-            }
-        }
-    };
-    feed(&canvas_seed.to_le_bytes(), &mut st, &mut off, &mut total, &mut blk);
-    feed(
-        &(vendor.len() as u64).to_le_bytes(),
-        &mut st,
-        &mut off,
-        &mut total,
-        &mut blk,
-    );
-    feed(vendor, &mut st, &mut off, &mut total, &mut blk);
-    feed(
-        &(renderer.len() as u64).to_le_bytes(),
-        &mut st,
-        &mut off,
-        &mut total,
-        &mut blk,
-    );
-    feed(renderer, &mut st, &mut off, &mut total, &mut blk);
-    let total_bits = (total as u64) * 8;
-    blk[off] = 0x80;
-    if off < 56 {
-        blk[56..64].copy_from_slice(&total_bits.to_be_bytes());
-        crate::crypto::sha256_block(&mut st, &blk);
-    } else {
-        crate::crypto::sha256_block(&mut st, &blk);
-        let mut tail = [0u8; 64];
-        tail[56..64].copy_from_slice(&total_bits.to_be_bytes());
-        crate::crypto::sha256_block(&mut st, &tail);
-    }
-    let digest = crate::crypto::words_be32(&st);
+    use md5::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(canvas_seed.to_le_bytes());
+    h.update((vendor.len() as u64).to_le_bytes());
+    h.update(vendor);
+    h.update((renderer.len() as u64).to_le_bytes());
+    h.update(renderer);
+    let digest: [u8; 32] = h.finalize().into();
     digest.hex_lower_into(out);
 }

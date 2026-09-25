@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
-const POLYFILL: &str = include_str!("../assets/polyfill.js");
+const POLYFILL_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/polyfill.js");
+const POLYFILL_EMBED: &str = include_str!("../assets/polyfill.js");
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -257,7 +258,10 @@ fn build_engine(
             );
         }
     }
-    let bundle = Arc::new(Bundle::from_source(Arc::from(POLYFILL)));
+    let bundle = Arc::new(
+        Bundle::open(POLYFILL_PATH)
+            .unwrap_or_else(|_| Bundle::from_source(Arc::from(POLYFILL_EMBED))),
+    );
     let pool = WorkerPool::spawn(workers, bundle, tx, 4096)?;
     let catalog = engine_catalog_with_proxies(proxies)?;
     let engines = Arc::new(EngineSet::build(&catalog).map_err(|e| e.to_string())?);

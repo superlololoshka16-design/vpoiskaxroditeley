@@ -330,13 +330,20 @@ fn clear_region(pm: &mut PixmapMut<'_>, x: f64, y: f64, w: f64, h: f64) {
 }
 
 impl Cmd {
-    fn apply(&self, segs: &[PathSeg], pm: &mut PixmapMut<'_>, _seed: u64, ts: Transform) {
+    fn apply(
+        &self,
+        segs: &[PathSeg],
+        kind: FontKind,
+        pm: &mut PixmapMut<'_>,
+        _seed: u64,
+        ts: Transform,
+    ) {
         let (path, draw) = match self {
             Cmd::Clear { x, y, w, h } => return clear_region(pm, *x, *y, *w, *h),
             Cmd::Rect { x, y, w, h, draw } => (rect_path(*x, *y, *w, *h), *draw),
             Cmd::Text { text, x, y, px, draw } => {
                 let mut pb = PathBuilder::new();
-                push_text(&mut pb, self.kind, text, *x, *y, *px);
+                push_text(&mut pb, kind, text, *x, *y, *px);
                 (pb.finish(), *draw)
             }
             Cmd::Path {
@@ -680,7 +687,7 @@ impl CanvasRaster {
         };
         if let Some(mut pm) = PixmapMut::from_bytes(out, w, h) {
             for cmd in &self.cmds {
-                cmd.apply(&self.segs, &mut pm, seed, ts);
+                cmd.apply(&self.segs, self.kind, &mut pm, seed, ts);
             }
             let data = pm.data_mut();
             farble_pixels_offset(data, w, dx as i64, dy as i64, seed);
@@ -811,15 +818,7 @@ pub fn png_data_url_pixels(w: u32, h: u32, pixels: &[u8]) -> String {
 
 
 pub use core_utils::bench::bench_jitter;
-
-const CANVAS_COST_MS: [f64; 5] = [0.0016, 0.0042, 0.028, 0.055, 0.0009];
-
-pub fn canvas_time_cost_us(op: u8, cpu_scale: f64, gauss: f64) -> u64 {
-    let i = usize::from(op) % CANVAS_COST_MS.len();
-    let ms = (CANVAS_COST_MS[i] * core_utils::bench::bench_scale(cpu_scale, bench_jitter(gauss)))
-        .max(0.0001);
-    (ms * 1000.0).max(1.0) as u64
-}
+pub use core_utils::profile::canvas_time_cost_us;
 
 const AUDIO_ROOT: u64 = core_utils::rng::seeds::SALT_AUDIO_ROOT;
 const S_AUDIO_CHANNEL: u64 = core_utils::rng::seeds::SALT_AUDIO_CHANNEL;

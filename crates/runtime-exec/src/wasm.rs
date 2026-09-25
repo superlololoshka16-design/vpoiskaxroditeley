@@ -242,11 +242,17 @@ static SANDBOXES: [Sandbox; SANDBOX_COUNT] = [
 ];
 static RR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-fn spawn_sandbox() -> crossbeam_channel::Sender<WasmJob> {
+fn spawn_sandbox(idx: usize) -> crossbeam_channel::Sender<WasmJob> {
     let (tx, rx) = crossbeam_channel::bounded::<WasmJob>(1);
     std::thread::Builder::new()
         .name("silo-wasm3".into())
         .spawn(move || {
+            if let Ok(n) = std::thread::available_parallelism() {
+                let n = n.get();
+                if n > 2 {
+                    core_utils::pin_thread(n - 1 - (idx % 2));
+                }
+            }
             for (bin, reply) in rx {
                 let _ = reply.send(run_inplace(bin.as_ref()));
             }
@@ -262,7 +268,7 @@ fn sandbox_tx(idx: usize) -> Option<crossbeam_channel::Sender<WasmJob>> {
     if !cur.is_null() {
         return Some(unsafe { (*cur).clone() });
     }
-    let fresh = Box::into_raw(Box::new(spawn_sandbox()));
+    let fresh = Box::into_raw(Box::new(spawn_sandbox(idx)));
     match slot.tx.compare_exchange(
         std::ptr::null_mut(),
         fresh,
@@ -282,7 +288,12 @@ fn sandbox_tx(idx: usize) -> Option<crossbeam_channel::Sender<WasmJob>> {
 
 fn sandbox_kill(idx: usize) {
     let slot = &SANDBOXES[idx % SANDBOX_COUNT];
-    slot.tx.store(std::ptr::null_mut(), std::sync::atomic::Ordering::Release);
+    let cur = slot
+        .tx
+        .swap(std::ptr::null_mut(), std::sync::atomic::Ordering::AcqRel);
+    if !cur.is_null() {
+        drop(unsafe { Box::from_raw(cur) });
+    }
 }
 
 

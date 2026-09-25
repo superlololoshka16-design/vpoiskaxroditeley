@@ -156,13 +156,13 @@ pub fn solve_until(ch: &Challenge, deadline: std::time::Instant) -> Option<Solut
 struct WatchArm {
     abort: AtomicBool,
     active: AtomicBool,
-    deadline: parking_lot::Mutex<std::time::Instant>,
+    deadline_ms: std::sync::atomic::AtomicU64,
 }
 
 static WATCH: WatchArm = WatchArm {
     abort: AtomicBool::new(false),
     active: AtomicBool::new(false),
-    deadline: parking_lot::Mutex::new(std::time::Instant::now()),
+    deadline_ms: std::sync::atomic::AtomicU64::new(0),
 };
 
 impl WatchArm {
@@ -170,7 +170,14 @@ impl WatchArm {
         if !self.active.load(Ordering::Acquire) {
             return;
         }
-        if std::time::Instant::now() >= *self.deadline.lock() {
+        let dl = self.deadline_ms.load(Ordering::Acquire);
+        if dl != 0
+            && std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+                >= dl
+        {
             self.abort.store(true, Ordering::Release);
             self.active.store(false, Ordering::Release);
         }
@@ -185,7 +192,12 @@ struct DeadlineWatch;
 
 impl DeadlineWatch {
     fn arm(deadline: std::time::Instant, _abort: Arc<AtomicBool>) -> Self {
-        *WATCH.deadline.lock() = deadline;
+        let dl = std::time::SystemTime::now()
+            .checked_add(deadline.saturating_duration_since(std::time::Instant::now()))
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        WATCH.deadline_ms.store(dl, Ordering::Release);
         WATCH.abort.store(false, Ordering::Release);
         WATCH.active.store(true, Ordering::Release);
         DeadlineWatch

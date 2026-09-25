@@ -135,11 +135,15 @@ impl NormCache {
     }
 }
 
+#[repr(C, align(64))]
 pub(crate) struct Budget {
-    entries: AtomicU64,
-    bytes: AtomicU64,
     entry_limit: u64,
     byte_limit: u64,
+    _p0: [u64; 6],
+    entries: AtomicU64,
+    _p1: [u64; 7],
+    bytes: AtomicU64,
+    _p2: [u64; 7],
 }
 
 pub(crate) struct Charge {
@@ -151,10 +155,13 @@ pub(crate) struct Charge {
 impl Budget {
     pub(crate) fn new(entry_limit: usize, byte_limit: usize) -> Arc<Self> {
         Arc::new(Self {
-            entries: AtomicU64::new(0),
-            bytes: AtomicU64::new(0),
             entry_limit: entry_limit.max(1) as u64,
             byte_limit: byte_limit.max(1) as u64,
+            _p0: [0; 6],
+            entries: AtomicU64::new(0),
+            _p1: [0; 7],
+            bytes: AtomicU64::new(0),
+            _p2: [0; 7],
         })
     }
 

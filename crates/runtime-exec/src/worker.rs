@@ -265,7 +265,7 @@ impl Drop for RequestScope {
 }
 
 thread_local! {
-    pub(crate) static FAST_RNG: Cell<core_utils::rng::Rng> = Cell::new(core_utils::rng::Rng::new(core_utils::rng::GOLDEN));
+    pub(crate) static FAST_RNG: RefCell<core_utils::rng::Rng> = RefCell::new(core_utils::rng::Rng::new(core_utils::rng::GOLDEN));
     static COOKIE_OUT: RefCell<session_state::CookieJar> = RefCell::new(session_state::CookieJar::new());
     static NAV_OUT: RefCell<Option<CompactString>> = const { RefCell::new(None) };
     static INT_TICK: Cell<u64> = const { Cell::new(0) };
@@ -470,16 +470,11 @@ fn store_prof(snap: &ProfileSnap) {
             href: snap.href.clone(),
             cookie: snap.cookie.clone(),
             seed: snap.seed(),
-            raster_seed: {
-                let prof = profile;
-                let vendor = prof.webgl_vendor();
-                let renderer = prof.webgl_renderer();
-                let mut feed: SmallVec<[u8; 128]> = SmallVec::new();
-                feed.extend_from_slice(vendor.as_bytes());
-                feed.push(0xFF);
-                feed.extend_from_slice(renderer.as_bytes());
-                core_utils::xxh3::hash_seeded(snap.seed(), feed.as_slice())
-            },
+            raster_seed: core_utils::profile::raster_seed(
+                profile.canvas_seed,
+                profile.webgl_vendor().as_bytes(),
+                profile.webgl_renderer().as_bytes(),
+            ),
             mem_limit: profile.device_memory().clamp(2, 8) as usize * 1024 * 1024,
             rtt_ms: snap.rtt_ms,
             mobile: profile.platform.is_mobile(),
@@ -1005,8 +1000,15 @@ fn install_native_fetch<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<()> {
                 probe.to_cstring()?
             };
             let cookie = with_prof(|p| p.cookie.clone());
-            let reply =
-                crate::netapi::bridge_fetch(uc.as_str(), mc.as_str(), headers, body, cookie);
+            let reply = crate::netapi::bridge_fetch(crate::task::FetchCtx {
+                url: uc.as_str(),
+                method: mc.as_str(),
+                headers,
+                body,
+                cookie,
+                net_slot: net_slot(),
+                timeout: crate::task::timeout_budget(),
+            });
             let Some(reply) = reply else {
                 return promise_reject(&c, "TypeError: Failed to fetch");
             };
@@ -1372,26 +1374,39 @@ struct JsEnv {
 }
 
 fn native_sha256<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Function<'js>> {
-    native_hex_hash(ctx, "sha256", 64, |d, o| {
-        sha256_hex_into(d, o.try_into().expect("sha256 out"));
-    })
+    native_hex_hash(
+        ctx,
+        HashSpec { name: "sha256", width: 64 },
+        |d, o| {
+            sha256_hex_into(d, o.try_into().expect("sha256 out"));
+        },
+    )
 }
 
 fn native_md5<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Function<'js>> {
-    native_hex_hash(ctx, "md5", 32, |d, o| {
-        md5_hex_into(d, o.try_into().expect("md5 out"));
-    })
+    native_hex_hash(
+        ctx,
+        HashSpec { name: "md5", width: 32 },
+        |d, o| {
+            md5_hex_into(d, o.try_into().expect("md5 out"));
+        },
+    )
+}
+
+struct HashSpec {
+    name: &'static str,
+    width: usize,
 }
 
 fn native_hex_hash<'js, F>(
     ctx: &Ctx<'js>,
-    name: &'static str,
-    width: usize,
+    spec: HashSpec,
     hash: F,
 ) -> rquickjs::Result<Function<'js>>
 where
     F: Fn(&[u8], &mut [u8]) + Clone + 'js,
 {
+    let HashSpec { name, width } = spec;
     let f = Function::new(
         ctx.clone(),
         move |c: Ctx<'js>, s: rquickjs::String<'js>| -> rquickjs::Result<rquickjs::String<'js>> {
@@ -1718,12 +1733,7 @@ impl JsEnv {
             let math: Object = ctx.eval("Math")?;
             let random_f = Function::new(ctx.clone(), move || -> f64 {
                 touch::touch_log_record(ApiKey::RANDOM);
-                FAST_RNG.with(|c| {
-                    let mut rng = c.get();
-                    let v = rng.next_f64();
-                    c.set(rng);
-                    v
-                })
+                FAST_RNG.with_borrow_mut(|rng| rng.next_f64())
             })?;
             crate::stackfmt::set_fn_name(&ctx, &random_f, "random")?;
             math.prop(
@@ -1779,16 +1789,13 @@ impl JsEnv {
         dispatch::set_ready_state(dispatch::READY_LOADING);
         self.context.runtime().set_memory_limit(mem_limit());
         self.context.runtime().set_gc_threshold(gc_threshold());
-        FAST_RNG.with(|r| {
-            r.set(core_utils::rng::Rng::new(
+        FAST_RNG.with_borrow_mut(|r| {
+            *r = core_utils::rng::Rng::new(
                 snap.seed() ^ core_utils::rng::seeds::SALT_FOCUS_ENTER,
-            ));
+            );
         });
-        if let Some(dispatch) = self.dispatch.as_ref() {
-            dispatch.feed(&self.context, input);
-        }
-        let dispatch = self.dispatch.clone();
         let mut local_hit = false;
+        let dispatch = self.dispatch.clone();
         let result: Result<Option<CompactString>, rquickjs::Error> = {
             let JsEnv {
                 context,

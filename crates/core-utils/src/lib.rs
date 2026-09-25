@@ -1,4 +1,5 @@
 pub mod crypto;
+pub mod profile;
 pub mod encoding;
 pub mod math;
 pub mod rng;
@@ -7,7 +8,7 @@ pub mod tz;
 pub mod url;
 pub use crypto::{
     BLAKE2B_G_COLS, H0, K32, KdfError, PBKDF2_MAX_ITERATIONS, SUBTLE_MAX_OUT_BYTES,
-    adler32_feed, adler32_zeros, be32_words, blake2b, blake2b_long, canvas_hex_of, compress8,
+    adler32_feed, adler32_zeros, be32_words, blake2b, blake2b_long, compress8,
     cpu_avx2, cpu_avx512cd, cpu_sha, crc32_feed, digest_bytes, hmac_sha256_into, lz_batch16, lz_batch16_ref,
     lz_carry_chain, lz_words_be, md5_hex_into, pair_mut, pbkdf2_sha256_into, sha1_into, sha256,
     sha256_block, sha256_hex_into, sha256_into, sha256_midstate, sha256_seed_tail, sha_tail_pad,

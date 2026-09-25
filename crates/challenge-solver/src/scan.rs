@@ -131,13 +131,14 @@ pub(crate) fn pad64(block: &mut [u8; 64], at: usize, total: usize) {
     core_utils::sha_tail_pad(block, at, (total as u64) * 8);
 }
 
-pub(crate) fn tail_digest(
-    prefix: [u32; 8],
-    tail: &[u8],
-    total: usize,
-    nonce: u64,
-    width: usize,
-) -> [u8; 32] {
+pub(crate) struct TailCtx<'a> {
+    pub prefix: [u32; 8],
+    pub tail: &'a [u8],
+    pub total: usize,
+}
+
+pub(crate) fn tail_digest(ctx: TailCtx<'_>, nonce: u64, width: usize) -> [u8; 32] {
+    let TailCtx { prefix, tail, total } = ctx;
     let (mut b1, mut b2, single) = frame_blocks(tail, width, total);
     let mut digits = [0u8; 20];
     digits_of(nonce, &mut digits, width);
@@ -300,13 +301,14 @@ static SCAN_POOL: std::sync::LazyLock<ScanPool> = std::sync::LazyLock::new(|| {
     for t in 0..n {
         let rx = rx.clone();
         thread::Builder::new()
-            .name("silo-pow".into())
+            .name(format!("silo-pow-{t}"))
             .spawn(move || {
                 pin_thread((core0 + t) % ncores);
                 for f in rx.iter() {
                     f();
                 }
             })
+            .expect("scan pool spawn");
     }
     ScanPool { tx }
 });
